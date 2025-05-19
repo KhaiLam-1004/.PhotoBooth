@@ -1,0 +1,10 @@
+{
+  "files": {
+    "main.js": "/.PhotoBooth/static/js/main.5ceee392.js",
+    "index.html": "/.PhotoBooth/index.html",
+    "main.5ceee392.js.map": "/.PhotoBooth/static/js/main.5ceee392.js.map"
+  },
+  "entrypoints": [
+    "static/js/main.5ceee392.js"
+  ]
+}
