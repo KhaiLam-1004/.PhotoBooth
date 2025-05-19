@@ -66,7 +66,7 @@ const App: React.FC = () => {
       return;
     }
     const frameImg = new window.Image();
-    frameImg.src = process.env.PUBLIC_URL + '/frame_summer_640X480.png';
+    frameImg.src = '/frame_summer_640x480.png';
     await new Promise((res) => { frameImg.onload = res; });
 
     const SCALE = 2; // xuất ảnh x2 để nét hơn
@@ -156,9 +156,16 @@ const App: React.FC = () => {
     ctx.fillText('© 2025 AW', width / 2, height - PADDING - 10 * SCALE);
     canvas.toBlob((blob) => {
       if (blob) {
-        saveAs(blob, 'photobooth-photo.png');
+        try {
+          saveAs(blob, 'photobooth-photo.png');
+        } catch (error) {
+          console.error('Lỗi khi lưu ảnh:', error);
+          alert('Không thể lưu ảnh. Vui lòng thử lại hoặc kiểm tra cài đặt trình duyệt của bạn.');
+        }
+      } else {
+        alert('Không thể tạo file ảnh. Vui lòng thử lại.');
       }
-    });
+    }, 'image/png', 1.0);
   };
 
   const resetPhotos = () => {

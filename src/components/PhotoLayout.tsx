@@ -2,7 +2,7 @@ import React from 'react';
 import { Box } from '@mui/material';
 import { PhotoLayoutProps } from '../types';
 
-const FRAME_IMAGE = process.env.PUBLIC_URL + '/frame_summer_640X480.png';
+const FRAME_IMAGE = '/frame_summer_640x480.png';
 
 const PhotoLayout: React.FC<PhotoLayoutProps> = ({ layout, images }) => {
   // Đơn giản: render các ảnh với overlay khung
