@@ -66,7 +66,7 @@ const App: React.FC = () => {
       return;
     }
     const frameImg = new window.Image();
-    frameImg.src = '/frame_summer_640x480.png';
+    frameImg.src = '/.PhotoBooth/frame_summer_640x480.png';
     await new Promise((res) => { frameImg.onload = res; });
 
     const SCALE = 2; // xuất ảnh x2 để nét hơn
