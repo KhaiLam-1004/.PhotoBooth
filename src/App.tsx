@@ -1,209 +1,519 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Box, Container, Button, Grid, Typography, Paper } from '@mui/material';
+import { Box, Button, Typography, Paper, Grid, Container, TextField } from '@mui/material';
 import Webcam from 'react-webcam';
 import html2canvas from 'html2canvas';
-import { saveAs } from 'file-saver';
-import PhotoLayout from './components/PhotoLayout';
 import CountdownTimer from './components/CountdownTimer';
-import { LayoutType } from './types';
 
-const App: React.FC = () => {
-  const [layout, setLayout] = useState<LayoutType>('4pose');
+const FRAME_COLORS = [
+  { name: 'White', value: '#fff' },
+  { name: 'Black', value: '#222' },
+  { name: 'Pink', value: '#f8bbd0' },
+  { name: 'Green', value: '#a5d6a7' },
+  { name: 'Blue', value: '#90caf9' },
+  { name: 'Yellow', value: '#fff59d' },
+  { name: 'Purple', value: '#ce93d8' },
+  { name: 'Maroon', value: '#8d6e63' },
+  { name: 'Burgundy', value: '#6d4c41' },
+];
+
+const FRAME_STICKERS = [
+  { name: 'Summer 1', value: '/.PhotoBooth/frame_summer.png' },
+  { name: 'Summer 2', value: '/.PhotoBooth/frame_summer_1.png' },
+  { name: 'Summer 3', value: '/.PhotoBooth/frame_summer_2.png' },
+  { name: 'Summer 4', value: '/.PhotoBooth/frame_summer_3.png' },
+  { name: 'Summer 5', value: '/.PhotoBooth/frame_summer_4.png' },
+  { name: 'Summer 6', value: '/.PhotoBooth/frame_summer_5.png' },
+  { name: 'Summer 7', value: '/.PhotoBooth/frame_summer_6.png' },
+  { name: 'Summer 8', value: '/.PhotoBooth/frame_summer_7.png' },
+];
+
+const LAYOUTS = [
+  { name: '2pose', label: '2pose', count: 2 },
+  { name: '3pose', label: '3pose', count: 3 },
+  { name: '4pose', label: '4pose', count: 4 },
+  { name: '6pose', label: '6pose', count: 6 },
+];
+
+const PLACEHOLDER_IMAGES = [
+  '/.PhotoBooth/sample1.jpg',
+  '/.PhotoBooth/sample2.jpg',
+  '/.PhotoBooth/sample3.jpg',
+  '/.PhotoBooth/sample4.jpg',
+  '/.PhotoBooth/sample5.jpg',
+  '/.PhotoBooth/sample6.jpg',
+];
+
+const FRAME_IMAGE = '/.PhotoBooth/frame_summer.png';
+
+const FRAME_WIDTH = 700;
+const FRAME_HEIGHT = 540;
+const PHOTO_WIDTH = 640;
+const PHOTO_HEIGHT = 360;
+const PHOTO_LEFT = 30;
+const PHOTO_TOP = 90;
+
+// Hàm tạo ảnh tổng hợp (merge ảnh + frame + text) bằng canvas, trả về data URL
+async function generateCompositeImage(images: string[], frameUrl: string, layout: string, backgroundColor: string, customMessage: string, textColor: string, fontSize: number): Promise<string | null> {
+  // Kích thước frame PNG (700x540, vùng ảnh 640x360 tại (30,90))
+  const frameW = 700, frameH = 540, photoW = 640, photoH = 360, photoX = 30, photoY = 90;
+  let cols = 1, rows = images.length;
+  if (layout === '4pose') { cols = 2; rows = 2; }
+  if (layout === '6pose') { cols = 2; rows = 3; }
+  if (layout === '3pose') { cols = 1; rows = 3; }
+  if (layout === '2pose') { cols = 1; rows = 2; }
+  const margin = 40, gap = 20;
+
+  // Calculate canvas dimensions based on layout
+  const canvasW = cols * frameW + (cols - 1) * gap + 2 * margin;
+  const canvasH = rows * frameH + (rows - 1) * gap + 2 * margin + 80; // Extra space for date/time
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasW;
+  canvas.height = canvasH;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = backgroundColor; // Use the selected background color
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // Load frame image once
+  const frameImg = await loadImage(frameUrl);
+
+  // Draw each photo within its frame
+  for (let i = 0; i < images.length; i++) {
+    const img = await loadImage(images[i]);
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x = margin + col * (frameW + gap);
+    const y = margin + row * (frameH + gap);
+
+    // Draw photo (scaled to fit, centered within photo area)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x + photoX, y + photoY, photoW, photoH);
+    ctx.clip();
+    const scale = Math.min(photoW / img.width, photoH / img.height);
+    const drawW = img.width * scale;
+    const drawH = img.height * scale;
+    const dx = x + photoX + (photoW - drawW) / 2;
+    const dy = y + photoY + (photoH - drawH) / 2;
+    ctx.drawImage(img, dx, dy, drawW, drawH);
+    ctx.restore();
+
+    // Draw frame on top
+    ctx.drawImage(frameImg, x, y, frameW, frameH);
+  }
+
+  // Add custom message
+  if (customMessage) {
+    ctx.fillStyle = textColor; // Use the selected text color
+    ctx.font = `${fontSize}px sans-serif`; // Use the selected font size
+    ctx.textAlign = 'center';
+
+    const lines = customMessage.split('\n');
+    const lineHeight = fontSize + 7; // Khoảng cách giữa các dòng, dựa trên font size
+    let startY = canvasH - 40 - (lines.length - 1) * lineHeight / 2; 
+
+    for (let i = 0; i < lines.length; i++) {
+      ctx.fillText(lines[i], canvasW / 2, startY + i * lineHeight);
+    }
+  }
+
+  // Helper function to load image
+  function loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((res, rej) => {
+      const img = new window.Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = src;
+    });
+  }
+
+  return canvas.toDataURL('image/png');
+}
+
+export default function App() {
+  const [frameColor, setFrameColor] = useState('#fff');
+  const [customColor, setCustomColor] = useState('#fff');
+  const [images, setImages] = useState<string[]>([]);
+  const [isPreview, setIsPreview] = useState(false);
+  const webcamRef = useRef<Webcam>(null);
   const [isCapturing, setIsCapturing] = useState(false);
   const [showCountdown, setShowCountdown] = useState(false);
-  const [capturedImages, setCapturedImages] = useState<string[]>([]);
-  const [remainingPhotos, setRemainingPhotos] = useState(0);
-  const webcamRef = useRef<Webcam>(null);
-  const photoContainerRef = useRef<HTMLDivElement>(null);
+  const [remainingPhotos, setRemainingPhotos] = useState(2);
+  const [layout, setLayout] = useState('2pose');
+  const [compositePreviewImage, setCompositePreviewImage] = useState<string | null>(null);
+  const [backgroundColor, setBackgroundColor] = useState<string>('#fff');
+  const [customMessage, setCustomMessage] = useState<string>('');
+  const [textColor, setTextColor] = useState<string>('#222');
+  const [fontSize, setFontSize] = useState<number>(28);
+  const [selectedFrame, setSelectedFrame] = useState<string>('/.PhotoBooth/frame_summer.png');
+  const [countdownSeconds, setCountdownSeconds] = useState<number>(3);
 
-  const getLayoutPhotoCount = (layoutType: LayoutType): number => {
-    switch (layoutType) {
-      case '2pose': return 2;
-      case '3pose': return 3;
-      case '4pose': return 4;
-      case '6pose': return 6;
-      default: return 4;
-    }
+  const previewRef = useRef<HTMLDivElement>(null);
+
+  // Lấy số ảnh cần chụp theo layout
+  const getLayoutPhotoCount = (layoutType: string): number => {
+    const found = LAYOUTS.find(l => l.name === layoutType);
+    return found ? found.count : 2;
   };
 
+  // Bắt đầu chụp tự động
+  const startCapture = () => {
+    setImages([]);
+    setRemainingPhotos(getLayoutPhotoCount(layout));
+    setIsCapturing(true);
+    setIsPreview(false);
+    setCompositePreviewImage(null); // Clear previous composite image
+    setTimeout(() => setShowCountdown(true), 300);
+  };
+
+  // Tự động kích hoạt đếm ngược cho ảnh tiếp theo hoặc chuyển sang preview
+  useEffect(() => {
+    if (isCapturing && !showCountdown && images.length > 0 && images.length < getLayoutPhotoCount(layout)) {
+      const timer = setTimeout(() => setShowCountdown(true), 800);
+      return () => clearTimeout(timer);
+    }
+    if (images.length === getLayoutPhotoCount(layout) && isCapturing) {
+      setTimeout(() => {
+        setIsCapturing(false);
+        setIsPreview(true);
+      }, 500);
+    }
+  }, [images, isCapturing, showCountdown, layout]);
+
+  // Generate composite image for preview when images/layout/background color/custom message/text color/font size change and is in preview mode
+  useEffect(() => {
+    if (isPreview && images.length > 0) {
+      const photoCount = getLayoutPhotoCount(layout);
+      const imagesToExport = (images.length ? images : PLACEHOLDER_IMAGES).slice(0, photoCount);
+      generateCompositeImage(imagesToExport, selectedFrame, layout, backgroundColor, customMessage, textColor, fontSize)
+        .then(dataUrl => {
+          setCompositePreviewImage(dataUrl);
+        })
+        .catch(error => console.error("Error generating composite image:", error));
+    }
+  }, [isPreview, images, layout, backgroundColor, customMessage, textColor, fontSize, selectedFrame]);
+
+  // Chụp ảnh
   const capturePhoto = () => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
       if (imageSrc) {
-        setCapturedImages(prev => [...prev, imageSrc]);
+        setImages(prev => [...prev, imageSrc]);
         setRemainingPhotos(prev => prev - 1);
-      }
-    }
-  };
-
-  const startCapture = () => {
-    setCapturedImages([]);
-    const photoCount = getLayoutPhotoCount(layout);
-    setRemainingPhotos(photoCount);
-    setShowCountdown(true);
-    setIsCapturing(true);
-  };
-
-  const handleCountdownComplete = () => {
-    capturePhoto();
-    setShowCountdown(false);
-    
-    // Nếu còn ảnh cần chụp, bắt đầu đếm ngược cho ảnh tiếp theo
-    if (remainingPhotos > 1) {
-      setTimeout(() => {
-        setShowCountdown(true);
-      }, 1000);
-    } else {
-      setIsCapturing(false);
-    }
-  };
-
-  const savePhoto = async () => {
-    const layoutPhotoCount: Record<LayoutType, number> = { '2pose': 2, '3pose': 3, '4pose': 4, '6pose': 6 };
-    const photoCount = layoutPhotoCount[layout];
-    if (capturedImages.length < photoCount) {
-      alert(`Bạn cần chụp đủ ${photoCount} ảnh để xuất layout này!`);
-      return;
-    }
-    const frameImg = new window.Image();
-    frameImg.src = '/.PhotoBooth/frame_summer_640x480.png';
-    await new Promise((res) => { frameImg.onload = res; });
-
-    const SCALE = 2; // xuất ảnh x2 để nét hơn
-    const MARGIN = 20 * SCALE;
-    const PADDING = 40 * SCALE;
-    let imgW = 640 * SCALE, imgH = 480 * SCALE;
-    let width = imgW;
-    let height = imgH * photoCount + MARGIN * (photoCount - 1) + 60 * SCALE;
-    let isGrid = false;
-    let gridCols = 1, gridRows = photoCount;
-    if (layout === '6pose') {
-      isGrid = true;
-      imgW = 320 * SCALE; imgH = 240 * SCALE;
-      gridCols = 3; gridRows = 2;
-      width = imgW * gridCols + MARGIN * (gridCols - 1);
-      height = imgH * gridRows + MARGIN * (gridRows - 1) + 60 * SCALE;
-    }
-    width += PADDING * 2;
-    height += PADDING * 2;
-
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, width, height);
-
-    // Hàm vẽ object-fit: cover
-    function drawImageCover(
-      ctx: CanvasRenderingContext2D,
-      img: HTMLImageElement,
-      dx: number,
-      dy: number,
-      dWidth: number,
-      dHeight: number
-    ) {
-      const arImg = img.width / img.height;
-      const arBox = dWidth / dHeight;
-      let sx = 0, sy = 0, sWidth = img.width, sHeight = img.height;
-      if (arImg > arBox) {
-        // Ảnh rộng hơn, crop ngang
-        sWidth = img.height * arBox;
-        sx = (img.width - sWidth) / 2;
-      } else {
-        // Ảnh cao hơn, crop dọc
-        sHeight = img.width / arBox;
-        sy = (img.height - sHeight) / 2;
-      }
-      ctx.drawImage(img, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
-    }
-
-    if (isGrid) {
-      for (let i = 0; i < 6; i++) {
-        const img = new window.Image();
-        img.src = capturedImages[i];
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((res) => { img.onload = res; });
-        const col = i % gridCols;
-        const row = Math.floor(i / gridCols);
-        const x = PADDING + col * (imgW + MARGIN);
-        const y = PADDING + row * (imgH + MARGIN);
-        drawImageCover(ctx, img, x, y, imgW, imgH);
-        ctx.drawImage(frameImg, 0, 0, frameImg.width, frameImg.height, x, y, imgW, imgH);
-      }
-    } else {
-      for (let i = 0; i < photoCount; i++) {
-        const img = new window.Image();
-        img.src = capturedImages[i];
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((res) => { img.onload = res; });
-        const x = PADDING;
-        const y = PADDING + i * (imgH + MARGIN);
-        drawImageCover(ctx, img, x, y, imgW, imgH);
-        ctx.drawImage(frameImg, 0, 0, frameImg.width, frameImg.height, x, y, imgW, imgH);
-      }
-    }
-    // Vẽ text dưới cùng
-    ctx.fillStyle = '#222';
-    ctx.font = `${20 * SCALE}px Arial`;
-    ctx.textAlign = 'center';
-    const now = new Date();
-    const dateStr = now.toLocaleDateString();
-    const timeStr = now.toLocaleTimeString();
-    ctx.fillText(`${dateStr}   ${timeStr}`, width / 2, height - PADDING - 30 * SCALE);
-    ctx.font = `${12 * SCALE}px Arial`;
-    ctx.fillText('© 2025 AW', width / 2, height - PADDING - 10 * SCALE);
-    canvas.toBlob((blob) => {
-      if (blob) {
-        try {
-          saveAs(blob, 'photobooth-photo.png');
-        } catch (error) {
-          console.error('Lỗi khi lưu ảnh:', error);
-          alert('Không thể lưu ảnh. Vui lòng thử lại hoặc kiểm tra cài đặt trình duyệt của bạn.');
+        
+        // Kiểm tra nếu đã chụp đủ ảnh thì dừng chụp
+        if (images.length + 1 >= getLayoutPhotoCount(layout)) {
+          setIsCapturing(false);
+          setShowCountdown(false);
         }
-      } else {
-        alert('Không thể tạo file ảnh. Vui lòng thử lại.');
       }
-    }, 'image/png', 1.0);
+    }
   };
 
-  const resetPhotos = () => {
-    setCapturedImages([]);
-    setRemainingPhotos(0);
-  };
+  // Giao diện preview đơn giản với sticker overlay
+  const renderPreview = () => (
+    <Box sx={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', p: 2, flexDirection: 'column' }}>
+      {/* New Box to contain image and color picker side-by-side */}
+      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+        {compositePreviewImage ? (
+          <img 
+            src={compositePreviewImage} 
+            alt="Photo strip preview" 
+            style={{
+              maxWidth: '28%', // Adjusted for better visual balance with side options
+              height: 'auto', 
+              borderRadius: '0.75rem' // Match general border-radius of the card
+            }}
+          />
+        ) : (
+          <Typography variant="h6">Đang tạo ảnh preview...</Typography>
+        )}
 
-  return (
-    <Container maxWidth="lg">
-      <Box sx={{ my: 4 }}>
+        {/* Customization options (text, text color, font size, background color) */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '476px' }}>
+          <Typography variant="h5" sx={{ mb: 1, textAlign: 'center' }}>
+            Customize your photo strip
+          </Typography>
+          <Typography variant="body2" sx={{ color: '#888', mb: 2, textAlign: 'center' }}>
+            Frame colour
+          </Typography>
+
+          {/* Chọn Khung Sticker - moved to top */}
+          <Box sx={{ 
+            border: '1px solid #e0e0e0', 
+            borderRadius: '8px', 
+            padding: '10px', 
+            backgroundColor: '#fafafa',
+            mt: 2,
+            width: '100%',
+            maxWidth: '1387px'
+          }}>
+            <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+              Chọn Khung Sticker
+            </Typography>
+            <Grid container spacing={2} justifyContent="center" sx={{ width: '100%', maxWidth: '1387px' }}> 
+              {FRAME_STICKERS.map((frame) => (
+                <Grid item xs={6} key={frame.name}> 
+                  <Button
+                    fullWidth
+                    onClick={() => setSelectedFrame(frame.value)}
+                    sx={{
+                      borderRadius: 9999, 
+                      border: '1px solid #000', 
+                      color: '#000', 
+                      backgroundColor: '#fff', 
+                      // Conditional styling for selected button
+                      ...(selectedFrame === frame.value && {
+                        backgroundColor: '#e3f2fd', 
+                        borderColor: '#2196f3', 
+                        color: '#1976d2',
+                      }),
+                      // Hover effect
+                      '&:hover': {
+                        backgroundColor: '#eee', 
+                        borderColor: '#000',
+                      },
+                    }}
+                  >
+                    {frame.name}
+                  </Button>
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
+
+          <Box sx={{ 
+            border: '1px solid #e0e0e0', 
+            borderRadius: '8px', 
+            padding: '10px', 
+            backgroundColor: '#fafafa',
+            mt: 2,
+            width: '100%',
+            maxWidth: '1387px'
+          }}>
+            <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+              Chọn Màu Nền
+            </Typography>
+            <Grid container spacing={2} justifyContent="center" sx={{ width: '100%', maxWidth: '1387px' }}> 
+              {FRAME_COLORS.map((color) => (
+                <Grid item xs={6} key={color.name}> 
+                  <Button
+                    fullWidth
+                    onClick={() => setBackgroundColor(color.value)}
+                    sx={{
+                      borderRadius: 9999, 
+                      border: '1px solid #000', 
+                      color: '#000', 
+                      backgroundColor: '#fff', 
+                      // Conditional styling for selected button
+                      ...(backgroundColor === color.value && {
+                        backgroundColor: color.value,
+                        color: color.name === 'White' ? '#333' : '#fff', 
+                        borderColor: color.value, 
+                      }),
+                      // Hover effect
+                      '&:hover': {
+                        backgroundColor: '#eee', 
+                        borderColor: '#000',
+                      },
+                    }}
+                  >
+                    {color.name}
+                  </Button>
+                </Grid>
+              ))}
+                <Grid item xs={12} sx={{ mt: 2 }}> 
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'center' }}>
+                    <Typography variant="body1" sx={{ color: '#222' }}>Custom:</Typography>
+                    <Box sx={{
+                      width: '40px',
+                      height: '40px',
+                      border: '2px solid #ccc',
+                      borderRadius: '4px',
+                      overflow: 'hidden', 
+                    }}>
+                      <input 
+                        type="color" 
+                        value={backgroundColor} 
+                        onChange={(e) => setBackgroundColor(e.target.value)} 
+                        style={{
+                          width: '120%', 
+                          height: '120%',
+                          border: 'none',
+                          padding: 0,
+                          cursor: 'pointer',
+                          transform: 'translate(-10%, -10%)', 
+                        }}
+                      />
+                    </Box>
+                  </Box>
+                </Grid>
+              </Grid>
+          </Box>
+
+          {/* Group for Custom Text, Color, and Size - moved to bottom */}
+          <Box sx={{ 
+            border: '1px solid #e0e0e0', 
+            borderRadius: '8px', 
+            padding: '10px', 
+            backgroundColor: '#fafafa',
+            mt: 2,
+            width: '100%',
+            maxWidth: '1387px'
+          }}>
+            <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+              Tùy chỉnh Văn bản
+            </Typography>
+            <TextField
+              label="Nhập tin nhắn của bạn"
+              variant="outlined"
+              fullWidth
+              multiline
+              rows={2}
+              value={customMessage}
+              onChange={(e) => setCustomMessage(e.target.value)}
+              sx={{ mb: 1 }}
+            />
+
+            {/* Color and Size Pickers side-by-side */}
+            <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2, justifyContent: 'center', width: '100%' }}>
+              {/* Chọn Màu Chữ section */}
+              <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, gap: 1, justifyContent: 'center' }}>
+                <Typography variant="body1" sx={{ color: '#222', whiteSpace: 'nowrap' }}>Màu:</Typography>
+                <Box sx={{
+                  width: '40px',
+                  height: '40px',
+                  border: '2px solid #ccc',
+                  borderRadius: '4px',
+                  overflow: 'hidden', 
+                }}>
+                  <input 
+                    type="color" 
+                    value={textColor} 
+                    onChange={(e) => setTextColor(e.target.value)} 
+                    style={{
+                      width: '120%', 
+                      height: '120%',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                      transform: 'translate(-10%, -10%)', 
+                    }}
+                  />
+                </Box>
+              </Box>
+
+              {/* Chọn Kích Cỡ Chữ section */}
+              <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, gap: 1, justifyContent: 'center' }}>
+                <Typography variant="body1" sx={{ color: '#222', whiteSpace: 'nowrap' }}>Kích cỡ (px):</Typography>
+                <TextField
+                  variant="outlined"
+                  size="small" // Make it smaller
+                  type="number"
+                  value={fontSize}
+                  onChange={(e) => setFontSize(Number(e.target.value))}
+                  inputProps={{ min: 10, max: 100 }} 
+                  sx={{ width: '80px' }} // Set a fixed width
+                />
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Buttons below the image and customization options */}
+      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', mt: 4 }}>
+        <Button 
+          variant="outlined" 
+          onClick={() => {
+            setImages([]);
+            setIsPreview(false);
+            setIsCapturing(false);
+            setShowCountdown(false);
+            setRemainingPhotos(getLayoutPhotoCount(layout));
+            setCompositePreviewImage(null); // Clear composite image when retaking
+            setBackgroundColor('#fff'); // Reset background color when retaking
+            setCustomMessage(''); // Reset custom message when retaking
+            setTextColor('#222'); // Reset text color when retaking
+            setFontSize(28); // Reset font size when retaking
+            setSelectedFrame('/.PhotoBooth/frame_summer.png'); // Reset frame to default
+          }}
+          sx={{
+            borderRadius: 9999, 
+            border: '1px solid #000', 
+            color: '#000', 
+            backgroundColor: '#fff', 
+            px: 3,
+            py: 1,
+            // Hover effect
+            '&:hover': {
+              backgroundColor: '#eee', 
+              borderColor: '#000',
+            },
+          }}
+        >
+          Chụp lại
+        </Button>
+        <Button 
+          variant="contained" 
+          color="primary" 
+          onClick={async () => {
+            if (compositePreviewImage) {
+              const link = document.createElement('a');
+              link.download = 'photobooth-photo.png';
+              link.href = compositePreviewImage;
+              link.click();
+            } else {
+              console.error("Composite image not available for download.");
+            }
+          }}
+          sx={{
+            borderRadius: 9999, 
+            border: '1px solid #1976d2', 
+            color: '#fff', 
+            backgroundColor: '#1976d2', 
+            px: 3,
+            py: 1,
+            // Hover effect
+            '&:hover': {
+              backgroundColor: '#1565c0', 
+              borderColor: '#1565c0',
+            },
+          }}
+        >
+          Download
+        </Button>
+      </Box>
+    </Box>
+  );
+
+  // Giao diện chụp ảnh
+  const renderCapture = () => (
+    <Container maxWidth="lg" sx={{ minHeight: '100vh', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <Box sx={{ my: 4, width: '100%' }}>
         <Typography variant="h3" component="h1" gutterBottom align="center">
           Photobooth Mùa Hè
         </Typography>
-
-        <Grid container spacing={3}>
+        <Grid container spacing={3} justifyContent="center">
           <Grid item xs={12} md={8}>
-            <Paper elevation={3} sx={{ p: 2, position: 'relative' }}>
+            <Paper elevation={3} sx={{ p: 2, position: 'relative', mb: 2 }}>
               <Webcam
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
-                style={{ width: '100%', height: 'auto' }}
+                style={{ width: '100%', height: 'auto', objectFit: 'cover', borderRadius: 8 }}
+                videoConstraints={{ width: 1280, height: 720, aspectRatio: 16 / 9 }}
               />
               {showCountdown && (
-                <Box
-                  sx={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    backgroundColor: 'rgba(0,0,0,0.5)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
+                <CountdownTimer 
+                  onComplete={() => {
+                    capturePhoto();
+                    setShowCountdown(false);
                   }}
-                >
-                  <CountdownTimer onComplete={handleCountdownComplete} />
-                </Box>
+                  countdownSeconds={countdownSeconds}
+                />
               )}
               {isCapturing && !showCountdown && (
                 <Typography
@@ -219,32 +529,157 @@ const App: React.FC = () => {
                     borderRadius: '4px',
                   }}
                 >
-                  Còn {remainingPhotos} ảnh
+                  Còn {getLayoutPhotoCount(layout) - images.length} ảnh
                 </Typography>
               )}
             </Paper>
-          </Grid>
 
+            {/* Hiển thị các ảnh đã chụp */}
+            {images.length > 0 && (
+              <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+                  Ảnh đã chụp ({images.length}/{getLayoutPhotoCount(layout)})
+                </Typography>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexWrap: 'wrap', 
+                  gap: 2, 
+                  justifyContent: 'center',
+                  maxHeight: '300px',
+                  overflowY: 'auto',
+                  mb: 2
+                }}>
+                  {images.map((image, index) => (
+                    <Box 
+                      key={index} 
+                      sx={{ 
+                        position: 'relative',
+                        border: '2px solid #e0e0e0',
+                        borderRadius: '8px',
+                        overflow: 'hidden',
+                        width: '120px',
+                        height: '120px',
+                        flexShrink: 0
+                      }}
+                    >
+                      <img 
+                        src={image} 
+                        alt={`Ảnh ${index + 1}`}
+                        style={{ 
+                          width: '100%', 
+                          height: '100%', 
+                          objectFit: 'cover' 
+                        }}
+                      />
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          position: 'absolute',
+                          bottom: '4px',
+                          right: '4px',
+                          backgroundColor: 'rgba(0,0,0,0.7)',
+                          color: 'white',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontSize: '0.7rem'
+                        }}
+                      >
+                        {index + 1}
+                      </Typography>
+                    </Box>
+                  ))}
+                </Box>
+                
+                {/* Nút Xem Preview - chỉ hiển thị khi đã chụp đủ ảnh */}
+                {images.length >= getLayoutPhotoCount(layout) && (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+                    <Button
+                      variant="contained"
+                      color="success"
+                      onClick={async () => {
+                        const compositeImage = await generateCompositeImage(
+                          images, 
+                          selectedFrame, 
+                          layout, 
+                          backgroundColor, 
+                          customMessage, 
+                          textColor, 
+                          fontSize
+                        );
+                        if (compositeImage) {
+                          setCompositePreviewImage(compositeImage);
+                          setIsPreview(true);
+                        }
+                      }}
+                      sx={{
+                        borderRadius: 9999,
+                        border: '1px solid #2e7d32',
+                        color: '#fff',
+                        backgroundColor: '#2e7d32',
+                        px: 4,
+                        py: 1.5,
+                        fontSize: '1.1rem',
+                        fontWeight: 'bold',
+                        // Hover effect
+                        '&:hover': {
+                          backgroundColor: '#1b5e20',
+                          borderColor: '#1b5e20',
+                        },
+                      }}
+                    >
+                      🎨 Xem Preview
+                    </Button>
+                  </Box>
+                )}
+              </Paper>
+            )}
+          </Grid>
           <Grid item xs={12} md={4}>
             <Paper elevation={3} sx={{ p: 2 }}>
               <Typography variant="h6" gutterBottom>
                 Chọn Layout
               </Typography>
               <Grid container spacing={1}>
-                {['2pose', '3pose', '4pose', '6pose'].map((layoutType) => (
-                  <Grid item xs={6} key={layoutType}>
+                {LAYOUTS.map((l) => (
+                  <Grid item xs={6} key={l.name}>
                     <Button
-                      variant={layout === layoutType ? 'contained' : 'outlined'}
+                      variant={layout === l.name ? 'contained' : 'outlined'}
                       fullWidth
-                      onClick={() => setLayout(layoutType as LayoutType)}
+                      onClick={() => setLayout(l.name)}
                       disabled={isCapturing}
                     >
-                      {layoutType}
+                      {l.label}
                     </Button>
                   </Grid>
                 ))}
               </Grid>
-
+              
+              {/* Tùy chọn Countdown */}
+              <Box sx={{ mt: 3, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  Thời gian Countdown
+                </Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography variant="body2" sx={{ color: '#666' }}>
+                    Số giây:
+                  </Typography>
+                  <TextField
+                    variant="outlined"
+                    size="small"
+                    type="number"
+                    value={countdownSeconds}
+                    onChange={(e) => setCountdownSeconds(Number(e.target.value))}
+                    inputProps={{ 
+                      min: 1, 
+                      max: 10,
+                      step: 1
+                    }}
+                    sx={{ width: '80px' }}
+                    disabled={isCapturing}
+                  />
+                </Box>
+              </Box>
+              
               <Box sx={{ mt: 2 }}>
                 <Button
                   variant="contained"
@@ -254,48 +689,30 @@ const App: React.FC = () => {
                   disabled={isCapturing}
                   sx={{ mb: 1 }}
                 >
-                  Chụp ảnh
+                  Bắt đầu chụp
                 </Button>
                 <Button
                   variant="outlined"
                   color="secondary"
                   fullWidth
-                  onClick={resetPhotos}
-                  disabled={capturedImages.length === 0 || isCapturing}
+                  onClick={() => {
+                    setImages([]);
+                    setIsPreview(false);
+                    setIsCapturing(false);
+                    setShowCountdown(false);
+                    setRemainingPhotos(getLayoutPhotoCount(layout));
+                    setCompositePreviewImage(null);
+                  }}
                 >
                   Chụp lại
                 </Button>
               </Box>
             </Paper>
           </Grid>
-
-          {capturedImages.length > 0 && (
-            <Grid item xs={12}>
-              <Paper
-                ref={photoContainerRef}
-                elevation={3}
-                sx={{ p: 2, position: 'relative' }}
-              >
-                <PhotoLayout
-                  layout={layout}
-                  images={capturedImages}
-                />
-                <Button
-                  variant="contained"
-                  color="primary"
-                  fullWidth
-                  onClick={savePhoto}
-                  sx={{ mt: 2 }}
-                >
-                  Tải ảnh về máy
-                </Button>
-              </Paper>
-            </Grid>
-          )}
         </Grid>
       </Box>
     </Container>
   );
-};
 
-export default App; 
+  return isPreview ? renderPreview() : renderCapture();
+} 

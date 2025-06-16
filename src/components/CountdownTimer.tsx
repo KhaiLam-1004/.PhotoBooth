@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Box, Typography } from '@mui/material';
 import { CountdownTimerProps } from '../types';
 
-const CountdownTimer: React.FC<CountdownTimerProps> = ({ onComplete }) => {
-  const [count, setCount] = useState(4);
+const CountdownTimer: React.FC<CountdownTimerProps> = ({ onComplete, countdownSeconds = 3 }) => {
+  const [count, setCount] = useState(countdownSeconds);
 
   useEffect(() => {
     if (count > 0) {
