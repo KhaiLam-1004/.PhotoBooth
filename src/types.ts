@@ -8,4 +8,10 @@ export interface PhotoLayoutProps {
 export interface CountdownTimerProps {
   onComplete: () => void;
   countdownSeconds?: number;
+}
+
+export interface PhotoLayout {
+  name: string;
+  label: string;
+  count: number;
 } 

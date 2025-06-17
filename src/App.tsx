@@ -1,8 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Box, Button, Typography, Paper, Grid, Container, TextField } from '@mui/material';
 import Webcam from 'react-webcam';
 import html2canvas from 'html2canvas';
 import CountdownTimer from './components/CountdownTimer';
+import { debounce } from 'lodash';
 
 const FRAME_COLORS = [
   { name: 'White', value: '#fff' },
@@ -52,8 +53,63 @@ const PHOTO_HEIGHT = 360;
 const PHOTO_LEFT = 30;
 const PHOTO_TOP = 90;
 
+// Danh sách font viết tay đẹp
+const HANDWRITING_FONTS = [
+  // Google Fonts (có sẵn và đáng tin cậy)
+  { name: 'Brush Script MT', value: 'Brush Script MT, cursive' },
+  { name: 'Dancing Script', value: '"Dancing Script", cursive' },
+  { name: 'Pacifico', value: '"Pacifico", cursive' },
+  { name: 'Satisfy', value: '"Satisfy", cursive' },
+  { name: 'Great Vibes', value: '"Great Vibes", cursive' },
+  { name: 'Alex Brush', value: '"Alex Brush", cursive' },
+  { name: 'Allura', value: '"Allura", cursive' },
+  { name: 'Caveat', value: '"Caveat", cursive' },
+  { name: 'Indie Flower', value: '"Indie Flower", cursive' },
+  { name: 'Kalam', value: '"Kalam", cursive' },
+  { name: 'Shadows Into Light', value: '"Shadows Into Light", cursive' },
+  { name: 'Permanent Marker', value: '"Permanent Marker", cursive' },
+  { name: 'Cedarville Cursive', value: '"Cedarville Cursive", cursive' },
+  { name: 'Homemade Apple', value: '"Homemade Apple", cursive' },
+  { name: 'Reenie Beanie', value: '"Reenie Beanie", cursive' },
+  { name: 'Rock Salt', value: '"Rock Salt", cursive' },
+  { name: 'Sacramento', value: '"Sacramento", cursive' },
+  { name: 'Yellowtail', value: '"Yellowtail", cursive' },
+  { name: 'Zeyada', value: '"Zeyada", cursive' },
+  { name: 'Just Another Hand', value: '"Just Another Hand", cursive' },
+  
+  // Thêm các font viết tay đẹp khác từ Google Fonts
+  { name: 'Marck Script', value: '"Marck Script", cursive' },
+  { name: 'Patrick Hand', value: '"Patrick Hand", cursive' },
+  { name: 'Architects Daughter', value: '"Architects Daughter", cursive' },
+  { name: 'Gloria Hallelujah', value: '"Gloria Hallelujah", cursive' },
+  { name: 'Bangers', value: '"Bangers", cursive' },
+  { name: 'Fredoka One', value: '"Fredoka One", cursive' },
+  { name: 'Righteous', value: '"Righteous", cursive' },
+  { name: 'Lobster', value: '"Lobster", cursive' },
+  { name: 'Bungee Shade', value: '"Bungee Shade", cursive' },
+  { name: 'Press Start 2P', value: '"Press Start 2P", cursive' },
+  { name: 'VT323', value: '"VT323", monospace' },
+  { name: 'Orbitron', value: '"Orbitron", sans-serif' },
+  { name: 'Audiowide', value: '"Audiowide", cursive' },
+  { name: 'Russo One', value: '"Russo One", sans-serif' },
+  { name: 'Bungee', value: '"Bungee", cursive' },
+  { name: 'Monoton', value: '"Monoton", cursive' },
+  { name: 'Faster One', value: '"Faster One", cursive' },
+  { name: 'Freckle Face', value: '"Freckle Face", cursive' },
+  { name: 'Finger Paint', value: '"Finger Paint", cursive' },
+  { name: 'Eater', value: '"Eater", cursive' },
+  { name: 'Creepster', value: '"Creepster", cursive' },
+  { name: 'Butcherman', value: '"Butcherman", cursive' },
+  { name: 'Astloch', value: '"Astloch", serif' },
+  { name: 'Abril Fatface', value: '"Abril Fatface", cursive' },
+  { name: 'Playfair Display', value: '"Playfair Display", serif' },
+  { name: 'Dancing Script Bold', value: '"Dancing Script", cursive' },
+  { name: 'Caveat Bold', value: '"Caveat", cursive' },
+  { name: 'Kalam Bold', value: '"Kalam", cursive' },
+];
+
 // Hàm tạo ảnh tổng hợp (merge ảnh + frame + text) bằng canvas, trả về data URL
-async function generateCompositeImage(images: string[], frameUrl: string, layout: string, backgroundColor: string, customMessage: string, textColor: string, fontSize: number): Promise<string | null> {
+async function generateCompositeImage(images: string[], frameUrl: string, layout: string, backgroundColor: string, customMessage: string, textColor: string, fontSize: number, fontFamily: string): Promise<string | null> {
   // Kích thước frame PNG (700x540, vùng ảnh 640x360 tại (30,90))
   const frameW = 700, frameH = 540, photoW = 640, photoH = 360, photoX = 30, photoY = 90;
   let cols = 1, rows = images.length;
@@ -107,7 +163,7 @@ async function generateCompositeImage(images: string[], frameUrl: string, layout
   // Add custom message
   if (customMessage) {
     ctx.fillStyle = textColor; // Use the selected text color
-    ctx.font = `${fontSize}px sans-serif`; // Use the selected font size
+    ctx.font = `${fontSize}px ${fontFamily}`; // Use the selected font size and family
     ctx.textAlign = 'center';
 
     const lines = customMessage.split('\n');
@@ -133,6 +189,174 @@ async function generateCompositeImage(images: string[], frameUrl: string, layout
   return canvas.toDataURL('image/png');
 }
 
+// Hàm làm mịn da sử dụng Canvas API (tối ưu hóa)
+async function applySkinSmoothingFilter(imageSrc: string, intensity: number): Promise<string> {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    
+    img.onload = () => {
+      // Reduce image size for better performance
+      const maxSize = 800;
+      let { width, height } = img;
+      
+      if (width > maxSize || height > maxSize) {
+        const ratio = Math.min(maxSize / width, maxSize / height);
+        width *= ratio;
+        height *= ratio;
+      }
+      
+      canvas.width = width;
+      canvas.height = height;
+      
+      if (!ctx) {
+        resolve(imageSrc);
+        return;
+      }
+      
+      // Enable image smoothing for better quality
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      
+      // Vẽ ảnh gốc với kích thước tối ưu
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // Lấy dữ liệu pixel
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      
+      // Tạo bản sao để xử lý
+      const processedData = new Uint8ClampedArray(data);
+      
+      // Bước 1: Phát hiện vùng da (tối ưu hóa)
+      const skinMask = detectSkinAreas(data, width, height);
+      
+      // Bước 2: Áp dụng Gaussian blur cho vùng da (giảm radius cho hiệu suất)
+      const optimizedRadius = Math.max(1, Math.floor(intensity * 2)); // Giảm từ 3 xuống 2
+      applyGaussianBlur(data, processedData, skinMask, width, height, optimizedRadius);
+      
+      // Bước 3: Tăng độ sáng cho vùng da
+      enhanceSkinTone(processedData, skinMask, intensity);
+      
+      // Cập nhật canvas với dữ liệu đã xử lý
+      const newImageData = new ImageData(processedData, width, height);
+      ctx.putImageData(newImageData, 0, 0);
+      
+      resolve(canvas.toDataURL('image/jpeg', 0.9)); // Giảm quality từ 0.95 xuống 0.9
+    };
+    
+    img.src = imageSrc;
+  });
+}
+
+// Hàm phát hiện vùng da
+function detectSkinAreas(data: Uint8ClampedArray, width: number, height: number): boolean[] {
+  const skinMask = new Array(width * height).fill(false);
+  
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    
+    // Điều kiện phát hiện da đơn giản
+    const isSkin = (
+      r > 95 && g > 40 && b > 20 &&
+      Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
+      Math.abs(r - g) > 15 && r > g && r > b
+    );
+    
+    skinMask[i / 4] = isSkin;
+  }
+  
+  return skinMask;
+}
+
+// Hàm áp dụng Gaussian blur (tối ưu hóa)
+function applyGaussianBlur(
+  originalData: Uint8ClampedArray, 
+  processedData: Uint8ClampedArray, 
+  skinMask: boolean[], 
+  width: number, 
+  height: number, 
+  radius: number
+) {
+  // Giảm radius để tăng hiệu suất
+  const maxRadius = Math.min(radius, 5);
+  
+  for (let y = maxRadius; y < height - maxRadius; y += 2) { // Skip every 2 pixels
+    for (let x = maxRadius; x < width - maxRadius; x += 2) { // Skip every 2 pixels
+      const idx = (y * width + x) * 4;
+      
+      // Chỉ xử lý vùng da
+      if (!skinMask[y * width + x]) {
+        continue;
+      }
+      
+      let rSum = 0, gSum = 0, bSum = 0, count = 0;
+      
+      // Áp dụng blur đơn giản với radius nhỏ hơn
+      for (let ky = -maxRadius; ky <= maxRadius; ky += 1) {
+        for (let kx = -maxRadius; kx <= maxRadius; kx += 1) {
+          const neighborIdx = ((y + ky) * width + (x + kx)) * 4;
+          rSum += originalData[neighborIdx];
+          gSum += originalData[neighborIdx + 1];
+          bSum += originalData[neighborIdx + 2];
+          count++;
+        }
+      }
+      
+      processedData[idx] = Math.round(rSum / count);
+      processedData[idx + 1] = Math.round(gSum / count);
+      processedData[idx + 2] = Math.round(bSum / count);
+    }
+  }
+}
+
+// Hàm tăng cường màu da
+function enhanceSkinTone(data: Uint8ClampedArray, skinMask: boolean[], intensity: number) {
+  for (let i = 0; i < data.length; i += 4) {
+    if (skinMask[i / 4]) {
+      // Tăng độ sáng nhẹ cho vùng da
+      const brightnessBoost = intensity * 15;
+      data[i] = Math.min(255, data[i] + brightnessBoost);
+      data[i + 1] = Math.min(255, data[i + 1] + brightnessBoost * 0.9);
+      data[i + 2] = Math.min(255, data[i + 2] + brightnessBoost * 0.7);
+    }
+  }
+}
+
+// Hàm xử lý tất cả ảnh với filter
+async function processImagesWithFilter(images: string[], intensity: number): Promise<string[]> {
+  const filteredImages: string[] = [];
+  
+  for (const image of images) {
+    const filteredImage = await applySkinSmoothingFilter(image, intensity);
+    filteredImages.push(filteredImage);
+  }
+  
+  return filteredImages;
+}
+
+// Memoized components for better performance
+const MemoizedImage = React.memo(({ src, alt, style }: { src: string; alt: string; style: React.CSSProperties }) => (
+  <img src={src} alt={alt} style={style} loading="lazy" />
+));
+
+const MemoizedPlaceholder = React.memo(({ width, height }: { width: number; height: number }) => (
+  <Box sx={{ 
+    width: `${width}px`,
+    height: `${height}px`,
+    border: '3px dashed #ddd', 
+    borderRadius: '0.75rem',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center'
+  }}>
+    <Typography variant="h6">Đang tạo ảnh...</Typography>
+  </Box>
+));
+
 export default function App() {
   const [frameColor, setFrameColor] = useState('#fff');
   const [customColor, setCustomColor] = useState('#fff');
@@ -151,23 +375,50 @@ export default function App() {
   const [selectedFrame, setSelectedFrame] = useState<string>('/.PhotoBooth/frame_summer.png');
   const [countdownSeconds, setCountdownSeconds] = useState<number>(3);
 
+  // New state for skin smoothing filter
+  const [enableSkinSmoothing, setEnableSkinSmoothing] = useState<boolean>(false);
+  const [skinSmoothingIntensity, setSkinSmoothingIntensity] = useState<number>(0.5);
+  const [filteredImages, setFilteredImages] = useState<string[]>([]);
+  const [compositePreviewImageWithFilter, setCompositePreviewImageWithFilter] = useState<string | null>(null);
+  const [compositePreviewImageWithoutFilter, setCompositePreviewImageWithoutFilter] = useState<string | null>(null);
+
+  // New state for font selection
+  const [selectedFont, setSelectedFont] = useState<string>(HANDWRITING_FONTS[0].value);
+
   const previewRef = useRef<HTMLDivElement>(null);
 
   // Lấy số ảnh cần chụp theo layout
-  const getLayoutPhotoCount = (layoutType: string): number => {
+  const getLayoutPhotoCount = useCallback((layoutType: string): number => {
     const found = LAYOUTS.find(l => l.name === layoutType);
     return found ? found.count : 2;
-  };
+  }, []);
+
+  // Memoized values for better performance
+  const photoCount = useMemo(() => getLayoutPhotoCount(layout), [layout, getLayoutPhotoCount]);
+  const imagesToExport = useMemo(() => {
+    return (images.length ? images : PLACEHOLDER_IMAGES).slice(0, photoCount);
+  }, [images, photoCount]);
+
+  // Optimized image dimensions for better performance
+  const imageDimensions = useMemo(() => {
+    const baseWidth = 480; // Reduced from original size
+    const baseHeight = 360;
+    return { width: baseWidth, height: baseHeight };
+  }, []);
 
   // Bắt đầu chụp tự động
-  const startCapture = () => {
+  const startCapture = useCallback(() => {
     setImages([]);
     setRemainingPhotos(getLayoutPhotoCount(layout));
     setIsCapturing(true);
     setIsPreview(false);
     setCompositePreviewImage(null); // Clear previous composite image
+    setCompositePreviewImageWithFilter(null);
+    setCompositePreviewImageWithoutFilter(null);
+    setFilteredImages([]);
+    setSelectedFont(HANDWRITING_FONTS[0].value); // Reset font to default
     setTimeout(() => setShowCountdown(true), 300);
-  };
+  }, [layout, getLayoutPhotoCount]);
 
   // Tự động kích hoạt đếm ngược cho ảnh tiếp theo hoặc chuyển sang preview
   useEffect(() => {
@@ -183,21 +434,75 @@ export default function App() {
     }
   }, [images, isCapturing, showCountdown, layout]);
 
+  // Debounced function for generating composite images
+  const debouncedGenerateComposite = useCallback(
+    debounce(async (imagesToExport: string[], enableFilter: boolean) => {
+      try {
+        // Generate composite image without filter
+        const dataUrl = await generateCompositeImage(
+          imagesToExport, 
+          selectedFrame, 
+          layout, 
+          backgroundColor, 
+          customMessage, 
+          textColor, 
+          fontSize, 
+          selectedFont
+        );
+        setCompositePreviewImageWithoutFilter(dataUrl);
+        
+        if (!enableFilter) {
+          setCompositePreviewImage(dataUrl);
+        }
+
+        // Generate composite image with filter if enabled
+        if (enableFilter) {
+          const filteredImages = await processImagesWithFilter(imagesToExport, skinSmoothingIntensity);
+          setFilteredImages(filteredImages);
+          
+          const filteredDataUrl = await generateCompositeImage(
+            filteredImages, 
+            selectedFrame, 
+            layout, 
+            backgroundColor, 
+            customMessage, 
+            textColor, 
+            fontSize, 
+            selectedFont
+          );
+          setCompositePreviewImageWithFilter(filteredDataUrl);
+          setCompositePreviewImage(filteredDataUrl);
+        }
+      } catch (error) {
+        console.error("Error generating composite image:", error);
+      }
+    }, 300), // 300ms delay
+    [selectedFrame, layout, backgroundColor, customMessage, textColor, fontSize, selectedFont, skinSmoothingIntensity]
+  );
+
   // Generate composite image for preview when images/layout/background color/custom message/text color/font size change and is in preview mode
   useEffect(() => {
     if (isPreview && images.length > 0) {
       const photoCount = getLayoutPhotoCount(layout);
       const imagesToExport = (images.length ? images : PLACEHOLDER_IMAGES).slice(0, photoCount);
-      generateCompositeImage(imagesToExport, selectedFrame, layout, backgroundColor, customMessage, textColor, fontSize)
-        .then(dataUrl => {
-          setCompositePreviewImage(dataUrl);
-        })
-        .catch(error => console.error("Error generating composite image:", error));
+      
+      debouncedGenerateComposite(imagesToExport, enableSkinSmoothing);
     }
-  }, [isPreview, images, layout, backgroundColor, customMessage, textColor, fontSize, selectedFrame]);
+  }, [isPreview, images, debouncedGenerateComposite, enableSkinSmoothing]);
+
+  // Handle filter toggle
+  useEffect(() => {
+    if (isPreview && compositePreviewImageWithoutFilter) {
+      if (enableSkinSmoothing && compositePreviewImageWithFilter) {
+        setCompositePreviewImage(compositePreviewImageWithFilter);
+      } else {
+        setCompositePreviewImage(compositePreviewImageWithoutFilter);
+      }
+    }
+  }, [enableSkinSmoothing, compositePreviewImageWithoutFilter, compositePreviewImageWithFilter, isPreview]);
 
   // Chụp ảnh
-  const capturePhoto = () => {
+  const capturePhoto = useCallback(() => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot();
       if (imageSrc) {
@@ -211,50 +516,184 @@ export default function App() {
         }
       }
     }
-  };
+  }, [images.length, layout, getLayoutPhotoCount]);
 
   // Giao diện preview đơn giản với sticker overlay
   const renderPreview = () => (
     <Box sx={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', p: 2, flexDirection: 'column' }}>
-      {/* New Box to contain image and color picker side-by-side */}
-      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-        {compositePreviewImage ? (
-          <img 
-            src={compositePreviewImage} 
-            alt="Photo strip preview" 
-            style={{
-              maxWidth: '28%', // Adjusted for better visual balance with side options
-              height: 'auto', 
-              borderRadius: '0.75rem' // Match general border-radius of the card
-            }}
-          />
-        ) : (
-          <Typography variant="h6">Đang tạo ảnh preview...</Typography>
-        )}
-
-        {/* Customization options (text, text color, font size, background color) */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: '476px' }}>
-          <Typography variant="h5" sx={{ mb: 1, textAlign: 'center' }}>
-            Customize your photo strip
+      {/* Main content area */}
+      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 4, width: '100%', maxWidth: '1400px' }}>
+        
+        {/* Left side - Image preview */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+          <Typography variant="h4" sx={{ mb: 2, textAlign: 'center', fontWeight: 'bold' }}>
+          PhotoBooth Summer
           </Typography>
-          <Typography variant="body2" sx={{ color: '#888', mb: 2, textAlign: 'center' }}>
-            Frame colour
+          
+          {/* Side-by-side image comparison */}
+          <Box sx={{ display: 'flex', flexDirection: 'row', gap: 4, justifyContent: 'center', alignItems: 'flex-start', width: '100%' }}>
+            {/* Original image without filter */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <Typography variant="h6" sx={{ mb: 1, textAlign: 'center', color: '#666' }}>
+                Ảnh gốc
+              </Typography>
+              {compositePreviewImageWithoutFilter ? (
+                <MemoizedImage 
+                  src={compositePreviewImageWithoutFilter} 
+                  alt="Original photo strip" 
+                  style={{
+                    maxWidth: '480px',
+                    height: 'auto', 
+                    borderRadius: '0.75rem',
+                    border: '3px solid #ddd'
+                  }}
+                />
+              ) : (
+                <MemoizedPlaceholder width={480} height={360} />
+              )}
+            </Box>
+
+            {/* Filtered image */}
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              <Typography variant="h6" sx={{ mb: 1, textAlign: 'center', color: '#666' }}>
+                Ảnh Filter
+              </Typography>
+              {compositePreviewImageWithFilter ? (
+                <MemoizedImage 
+                  src={compositePreviewImageWithFilter} 
+                  alt="Filtered photo strip" 
+                  style={{
+                    maxWidth: '480px',
+                    height: 'auto', 
+                    borderRadius: '0.75rem',
+                    border: '3px solid #4caf50'
+                  }}
+                />
+              ) : (
+                <MemoizedPlaceholder width={480} height={360} />
+              )}
+            </Box>
+          </Box>
+
+          {/* Filter controls - moved below images */}
+          <Box sx={{ 
+            border: '1px solid #e0e0e0', 
+            borderRadius: '8px', 
+            padding: '15px', 
+            backgroundColor: '#fafafa',
+            mt: 3,
+            width: '100%',
+            maxWidth: '960px' // Match the width of both images
+          }}>
+            <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
+              🎨 Filter làm mịn da
+            </Typography>
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
+              <Typography variant="body1" sx={{ color: '#222' }}>Bật filter:</Typography>
+              <Button
+                variant={enableSkinSmoothing ? 'contained' : 'outlined'}
+                color={enableSkinSmoothing ? 'success' : 'inherit'}
+                onClick={() => setEnableSkinSmoothing(!enableSkinSmoothing)}
+                sx={{ minWidth: '80px' }}
+              >
+                {enableSkinSmoothing ? 'Bật' : 'Tắt'}
+              </Button>
+            </Box>
+
+            {enableSkinSmoothing && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
+                <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Cường độ:</Typography>
+                <input 
+                  type="range" 
+                  min="0.1" 
+                  max="1" 
+                  step="0.1" 
+                  value={skinSmoothingIntensity} 
+                  onChange={(e) => setSkinSmoothingIntensity(Number(e.target.value))}
+                  style={{ width: '200px' }}
+                />
+                <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
+                  {Math.round(skinSmoothingIntensity * 100)}%
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          {/* Action buttons */}
+          <Box sx={{ display: 'flex', gap: 2, mt: 3 }}>
+            <Button
+              variant="contained"
+              color="primary"
+              onClick={() => {
+                const imageToDownload = enableSkinSmoothing && compositePreviewImageWithFilter 
+                  ? compositePreviewImageWithFilter 
+                  : compositePreviewImageWithoutFilter;
+                
+                if (imageToDownload) {
+                  const link = document.createElement('a');
+                  link.href = imageToDownload;
+                  link.download = `photobooth-${new Date().getTime()}.png`;
+                  link.click();
+                }
+              }}
+              sx={{
+                borderRadius: 9999,
+                px: 4,
+                py: 1.5,
+                fontSize: '1.1rem',
+                fontWeight: 'bold',
+              }}
+            >
+              💾 Tải xuống ảnh
+            </Button>
+            
+            <Button
+              variant="outlined" 
+              color="secondary"
+              onClick={() => {
+                setImages([]);
+                setIsPreview(false);
+                setIsCapturing(false);
+                setShowCountdown(false);
+                setRemainingPhotos(getLayoutPhotoCount(layout));
+                setCompositePreviewImage(null);
+                setCompositePreviewImageWithFilter(null);
+                setCompositePreviewImageWithoutFilter(null);
+                setFilteredImages([]);
+              }}
+              sx={{
+                borderRadius: 9999,
+                px: 4,
+                py: 1.5,
+                fontSize: '1.1rem',
+                fontWeight: 'bold',
+              }}
+            >
+              🔄 Chụp lại
+            </Button>
+          </Box>
+        </Box>
+
+        {/* Right side - Customization options */}
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '400px', minWidth: '400px' }}>
+          <Typography variant="h5" sx={{ mb: 2, textAlign: 'center' }}>
+            Tùy chỉnh ảnh
           </Typography>
 
-          {/* Chọn Khung Sticker - moved to top */}
+          {/* Chọn Khung Sticker */}
           <Box sx={{ 
             border: '1px solid #e0e0e0', 
             borderRadius: '8px', 
             padding: '10px', 
             backgroundColor: '#fafafa',
-            mt: 2,
-            width: '100%',
-            maxWidth: '1387px'
+            mb: 2,
+            width: '100%'
           }}>
             <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
               Chọn Khung Sticker
             </Typography>
-            <Grid container spacing={2} justifyContent="center" sx={{ width: '100%', maxWidth: '1387px' }}> 
+            <Grid container spacing={2} justifyContent="center"> 
               {FRAME_STICKERS.map((frame) => (
                 <Grid item xs={6} key={frame.name}> 
                   <Button
@@ -268,7 +707,7 @@ export default function App() {
                       // Conditional styling for selected button
                       ...(selectedFrame === frame.value && {
                         backgroundColor: '#e3f2fd', 
-                        borderColor: '#2196f3', 
+                        borderColor: '#2196d2', 
                         color: '#1976d2',
                       }),
                       // Hover effect
@@ -285,19 +724,19 @@ export default function App() {
             </Grid>
           </Box>
 
+          {/* Chọn Màu Nền */}
           <Box sx={{ 
             border: '1px solid #e0e0e0', 
             borderRadius: '8px', 
             padding: '10px', 
             backgroundColor: '#fafafa',
-            mt: 2,
-            width: '100%',
-            maxWidth: '1387px'
+            mb: 2,
+            width: '100%'
           }}>
             <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
               Chọn Màu Nền
             </Typography>
-            <Grid container spacing={2} justifyContent="center" sx={{ width: '100%', maxWidth: '1387px' }}> 
+            <Grid container spacing={2} justifyContent="center"> 
               {FRAME_COLORS.map((color) => (
                 <Grid item xs={6} key={color.name}> 
                   <Button
@@ -349,24 +788,75 @@ export default function App() {
                         }}
                       />
                     </Box>
+                    <TextField
+                      variant="outlined"
+                      size="small"
+                      placeholder="#ffffff"
+                      value={backgroundColor}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        if (value.match(/^#[0-9A-Fa-f]{6}$/) || value === '') {
+                          setBackgroundColor(value);
+                        }
+                      }}
+                      inputProps={{
+                        maxLength: 7,
+                        style: { 
+                          fontSize: '12px',
+                          textTransform: 'uppercase'
+                        }
+                      }}
+                      sx={{ 
+                        width: '100px',
+                        '& .MuiOutlinedInput-root': {
+                          height: '40px'
+                        }
+                      }}
+                    />
                   </Box>
                 </Grid>
               </Grid>
           </Box>
 
-          {/* Group for Custom Text, Color, and Size - moved to bottom */}
+          {/* Tùy chỉnh Văn bản */}
           <Box sx={{ 
             border: '1px solid #e0e0e0', 
             borderRadius: '8px', 
             padding: '10px', 
             backgroundColor: '#fafafa',
-            mt: 2,
-            width: '100%',
-            maxWidth: '1387px'
+            mb: 2,
+            width: '100%'
           }}>
             <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
               Tùy chỉnh Văn bản
             </Typography>
+            
+            {/* Font Preview */}
+            <Box sx={{ 
+              border: '1px solid #ddd', 
+              borderRadius: '4px', 
+              padding: '10px', 
+              backgroundColor: '#fff',
+              mb: 2,
+              minHeight: '60px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Typography 
+                variant="body1" 
+                sx={{ 
+                  fontFamily: selectedFont,
+                  fontSize: `${fontSize}px`,
+                  color: textColor,
+                  textAlign: 'center',
+                  wordBreak: 'break-word'
+                }}
+              >
+                {customMessage || 'Xem trước font chữ của bạn...'}
+              </Typography>
+            </Box>
+            
             <TextField
               label="Nhập tin nhắn của bạn"
               variant="outlined"
@@ -375,8 +865,43 @@ export default function App() {
               rows={2}
               value={customMessage}
               onChange={(e) => setCustomMessage(e.target.value)}
-              sx={{ mb: 1 }}
+              sx={{ mb: 2 }}
             />
+
+            {/* Font Selection */}
+            <Box sx={{ mb: 2 }}>
+              <Typography variant="body1" sx={{ color: '#222', mb: 1, textAlign: 'center' }}>
+                Chọn Font Chữ:
+              </Typography>
+              <select
+                value={selectedFont}
+                onChange={(e) => setSelectedFont(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  borderRadius: '4px',
+                  border: '1px solid #ccc',
+                  fontSize: '14px',
+                  backgroundColor: '#fff',
+                  maxHeight: '200px',
+                  overflowY: 'auto'
+                }}
+              >
+                {HANDWRITING_FONTS.map((font) => (
+                  <option 
+                    key={font.value} 
+                    value={font.value} 
+                    style={{ 
+                      fontFamily: font.value,
+                      fontSize: '14px',
+                      padding: '4px'
+                    }}
+                  >
+                    {font.name}
+                  </option>
+                ))}
+              </select>
+            </Box>
 
             {/* Color and Size Pickers side-by-side */}
             <Box sx={{ display: 'flex', flexDirection: 'row', gap: 2, justifyContent: 'center', width: '100%' }}>
@@ -423,74 +948,9 @@ export default function App() {
           </Box>
         </Box>
       </Box>
-
-      {/* Buttons below the image and customization options */}
-      <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', mt: 4 }}>
-        <Button 
-          variant="outlined" 
-          onClick={() => {
-            setImages([]);
-            setIsPreview(false);
-            setIsCapturing(false);
-            setShowCountdown(false);
-            setRemainingPhotos(getLayoutPhotoCount(layout));
-            setCompositePreviewImage(null); // Clear composite image when retaking
-            setBackgroundColor('#fff'); // Reset background color when retaking
-            setCustomMessage(''); // Reset custom message when retaking
-            setTextColor('#222'); // Reset text color when retaking
-            setFontSize(28); // Reset font size when retaking
-            setSelectedFrame('/.PhotoBooth/frame_summer.png'); // Reset frame to default
-          }}
-          sx={{
-            borderRadius: 9999, 
-            border: '1px solid #000', 
-            color: '#000', 
-            backgroundColor: '#fff', 
-            px: 3,
-            py: 1,
-            // Hover effect
-            '&:hover': {
-              backgroundColor: '#eee', 
-              borderColor: '#000',
-            },
-          }}
-        >
-          Chụp lại
-        </Button>
-        <Button 
-          variant="contained" 
-          color="primary" 
-          onClick={async () => {
-            if (compositePreviewImage) {
-              const link = document.createElement('a');
-              link.download = 'photobooth-photo.png';
-              link.href = compositePreviewImage;
-              link.click();
-            } else {
-              console.error("Composite image not available for download.");
-            }
-          }}
-          sx={{
-            borderRadius: 9999, 
-            border: '1px solid #1976d2', 
-            color: '#fff', 
-            backgroundColor: '#1976d2', 
-            px: 3,
-            py: 1,
-            // Hover effect
-            '&:hover': {
-              backgroundColor: '#1565c0', 
-              borderColor: '#1565c0',
-            },
-          }}
-        >
-          Download
-        </Button>
-      </Box>
     </Box>
   );
 
-  // Giao diện chụp ảnh
   const renderCapture = () => (
     <Container maxWidth="lg" sx={{ minHeight: '100vh', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <Box sx={{ my: 4, width: '100%' }}>
@@ -604,7 +1064,8 @@ export default function App() {
                           backgroundColor, 
                           customMessage, 
                           textColor, 
-                          fontSize
+                          fontSize,
+                          selectedFont
                         );
                         if (compositeImage) {
                           setCompositePreviewImage(compositeImage);
@@ -697,14 +1158,13 @@ export default function App() {
                   fullWidth
                   onClick={() => {
                     setImages([]);
-                    setIsPreview(false);
                     setIsCapturing(false);
                     setShowCountdown(false);
                     setRemainingPhotos(getLayoutPhotoCount(layout));
-                    setCompositePreviewImage(null);
                   }}
+                  disabled={!isCapturing && images.length === 0} // Chỉ cho phép reset khi đang chụp hoặc đã có ảnh
                 >
-                  Chụp lại
+                  Reset
                 </Button>
               </Box>
             </Paper>
@@ -714,5 +1174,9 @@ export default function App() {
     </Container>
   );
 
-  return isPreview ? renderPreview() : renderCapture();
+  return (
+    <React.Fragment>
+      {!isPreview ? renderCapture() : renderPreview()}
+    </React.Fragment>
+  );
 } 
