@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
-import { Box, Button, Typography, Paper, Grid, Container, TextField } from '@mui/material';
+import { Box, Button, Typography, Paper, Grid, Container, TextField, IconButton } from '@mui/material';
 import Webcam from 'react-webcam';
 import html2canvas from 'html2canvas';
 import CountdownTimer from './components/CountdownTimer';
 import { debounce } from 'lodash';
+import { imageProcessor, FilterOptions } from './services/imageProcessing';
 
 const FRAME_COLORS = [
   { name: 'White', value: '#fff' },
@@ -189,150 +190,103 @@ async function generateCompositeImage(images: string[], frameUrl: string, layout
   return canvas.toDataURL('image/png');
 }
 
-// Hàm làm mịn da sử dụng Canvas API (tối ưu hóa)
-async function applySkinSmoothingFilter(imageSrc: string, intensity: number): Promise<string> {
-  return new Promise((resolve) => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
-    const img = new Image();
-    
-    img.onload = () => {
-      // Reduce image size for better performance
-      const maxSize = 800;
-      let { width, height } = img;
-      
-      if (width > maxSize || height > maxSize) {
-        const ratio = Math.min(maxSize / width, maxSize / height);
-        width *= ratio;
-        height *= ratio;
-      }
-      
-      canvas.width = width;
-      canvas.height = height;
-      
-      if (!ctx) {
-        resolve(imageSrc);
-        return;
-      }
-      
-      // Enable image smoothing for better quality
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      
-      // Vẽ ảnh gốc với kích thước tối ưu
-      ctx.drawImage(img, 0, 0, width, height);
-      
-      // Lấy dữ liệu pixel
-      const imageData = ctx.getImageData(0, 0, width, height);
-      const data = imageData.data;
-      
-      // Tạo bản sao để xử lý
-      const processedData = new Uint8ClampedArray(data);
-      
-      // Bước 1: Phát hiện vùng da (tối ưu hóa)
-      const skinMask = detectSkinAreas(data, width, height);
-      
-      // Bước 2: Áp dụng Gaussian blur cho vùng da (giảm radius cho hiệu suất)
-      const optimizedRadius = Math.max(1, Math.floor(intensity * 2)); // Giảm từ 3 xuống 2
-      applyGaussianBlur(data, processedData, skinMask, width, height, optimizedRadius);
-      
-      // Bước 3: Tăng độ sáng cho vùng da
-      enhanceSkinTone(processedData, skinMask, intensity);
-      
-      // Cập nhật canvas với dữ liệu đã xử lý
-      const newImageData = new ImageData(processedData, width, height);
-      ctx.putImageData(newImageData, 0, 0);
-      
-      resolve(canvas.toDataURL('image/jpeg', 0.9)); // Giảm quality từ 0.95 xuống 0.9
-    };
-    
-    img.src = imageSrc;
-  });
-}
-
-// Hàm phát hiện vùng da
-function detectSkinAreas(data: Uint8ClampedArray, width: number, height: number): boolean[] {
-  const skinMask = new Array(width * height).fill(false);
-  
-  for (let i = 0; i < data.length; i += 4) {
-    const r = data[i];
-    const g = data[i + 1];
-    const b = data[i + 2];
-    
-    // Điều kiện phát hiện da đơn giản
-    const isSkin = (
-      r > 95 && g > 40 && b > 20 &&
-      Math.max(r, g, b) - Math.min(r, g, b) > 15 &&
-      Math.abs(r - g) > 15 && r > g && r > b
-    );
-    
-    skinMask[i / 4] = isSkin;
-  }
-  
-  return skinMask;
-}
-
-// Hàm áp dụng Gaussian blur (tối ưu hóa)
-function applyGaussianBlur(
-  originalData: Uint8ClampedArray, 
-  processedData: Uint8ClampedArray, 
-  skinMask: boolean[], 
-  width: number, 
-  height: number, 
-  radius: number
-) {
-  // Giảm radius để tăng hiệu suất
-  const maxRadius = Math.min(radius, 5);
-  
-  for (let y = maxRadius; y < height - maxRadius; y += 2) { // Skip every 2 pixels
-    for (let x = maxRadius; x < width - maxRadius; x += 2) { // Skip every 2 pixels
-      const idx = (y * width + x) * 4;
-      
-      // Chỉ xử lý vùng da
-      if (!skinMask[y * width + x]) {
-        continue;
-      }
-      
-      let rSum = 0, gSum = 0, bSum = 0, count = 0;
-      
-      // Áp dụng blur đơn giản với radius nhỏ hơn
-      for (let ky = -maxRadius; ky <= maxRadius; ky += 1) {
-        for (let kx = -maxRadius; kx <= maxRadius; kx += 1) {
-          const neighborIdx = ((y + ky) * width + (x + kx)) * 4;
-          rSum += originalData[neighborIdx];
-          gSum += originalData[neighborIdx + 1];
-          bSum += originalData[neighborIdx + 2];
-          count++;
-        }
-      }
-      
-      processedData[idx] = Math.round(rSum / count);
-      processedData[idx + 1] = Math.round(gSum / count);
-      processedData[idx + 2] = Math.round(bSum / count);
-    }
-  }
-}
-
-// Hàm tăng cường màu da
-function enhanceSkinTone(data: Uint8ClampedArray, skinMask: boolean[], intensity: number) {
-  for (let i = 0; i < data.length; i += 4) {
-    if (skinMask[i / 4]) {
-      // Tăng độ sáng nhẹ cho vùng da
-      const brightnessBoost = intensity * 15;
-      data[i] = Math.min(255, data[i] + brightnessBoost);
-      data[i + 1] = Math.min(255, data[i + 1] + brightnessBoost * 0.9);
-      data[i + 2] = Math.min(255, data[i + 2] + brightnessBoost * 0.7);
-    }
-  }
-}
-
 // Hàm xử lý tất cả ảnh với filter
-async function processImagesWithFilter(images: string[], intensity: number): Promise<string[]> {
+async function processImagesWithFilter(
+  images: string[], 
+  intensity: number,
+  useAdvanced: boolean = false,
+  brightnessEnhancement: number = 0.2,
+  contrastEnhancement: number = 0.3,
+  saturationEnhancement: number = 0.2,
+  setIsProcessing?: (loading: boolean) => void
+): Promise<string[]> {
+  console.log('🔍 Processing images with filter:', {
+    imageCount: images.length,
+    intensity,
+    useAdvanced,
+    brightnessEnhancement,
+    contrastEnhancement,
+    saturationEnhancement
+  });
+
+  if (setIsProcessing) setIsProcessing(true);
+
   const filteredImages: string[] = [];
   
-  for (const image of images) {
-    const filteredImage = await applySkinSmoothingFilter(image, intensity);
-    filteredImages.push(filteredImage);
+  try {
+    for (let i = 0; i < images.length; i++) {
+      const image = images[i];
+      console.log(`🖼️ Processing image ${i + 1}/${images.length}`);
+      
+      let filteredImage: string;
+      
+      if (useAdvanced) {
+        console.log('🤖 Using advanced MediaPipe AI processing');
+        // Use advanced MediaPipe AI processing
+        const filterOptions: FilterOptions = {
+          skinSmoothingIntensity: intensity,
+          brightnessEnhancement,
+          contrastEnhancement,
+          saturationEnhancement
+        };
+        
+        try {
+          filteredImage = await imageProcessor.applyAdvancedFilters(image, filterOptions);
+          console.log('✅ Advanced filter applied successfully');
+        } catch (error) {
+          console.error('❌ Advanced filter failed:', error);
+          console.log('🔄 Falling back to basic CSS filters...');
+          
+          // Fallback to basic CSS filters if MediaPipe fails
+          const canvas = document.createElement('canvas');
+          const ctx = canvas.getContext('2d')!;
+          const img = new Image();
+          
+          await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+            img.src = image;
+          });
+          
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          
+          // Apply basic CSS filters
+          const filters: string[] = [];
+          if (brightnessEnhancement > 0) {
+            const brightnessFactor = 1 + brightnessEnhancement * 1.0;
+            filters.push(`brightness(${brightnessFactor})`);
+          }
+          if (contrastEnhancement > 0) {
+            const contrastFactor = 1 + contrastEnhancement * 2.0;
+            filters.push(`contrast(${contrastFactor})`);
+          }
+          if (saturationEnhancement > 0) {
+            const saturationFactor = 1 + saturationEnhancement * 2.0;
+            filters.push(`saturate(${saturationFactor})`);
+          }
+          
+          if (filters.length > 0) {
+            ctx.filter = filters.join(' ');
+            ctx.drawImage(canvas, 0, 0);
+            ctx.filter = 'none';
+          }
+          
+          filteredImage = canvas.toDataURL('image/jpeg', 0.9);
+          console.log('✅ Basic CSS filters applied as fallback');
+        }
+      } else {
+        console.log('🎨 Legacy Canvas API processing is no longer supported. Please enable advanced filters.');
+        throw new Error('Legacy Canvas API processing is no longer supported.');
+      }
+      
+      filteredImages.push(filteredImage);
+    }
+    
+    console.log('🎉 All images processed successfully');
+  } finally {
+    if (setIsProcessing) setIsProcessing(false);
   }
   
   return filteredImages;
@@ -377,10 +331,17 @@ export default function App() {
 
   // New state for skin smoothing filter
   const [enableSkinSmoothing, setEnableSkinSmoothing] = useState<boolean>(false);
-  const [skinSmoothingIntensity, setSkinSmoothingIntensity] = useState<number>(0.5);
+  const [skinSmoothingIntensity, setSkinSmoothingIntensity] = useState<number>(0);
   const [filteredImages, setFilteredImages] = useState<string[]>([]);
   const [compositePreviewImageWithFilter, setCompositePreviewImageWithFilter] = useState<string | null>(null);
   const [compositePreviewImageWithoutFilter, setCompositePreviewImageWithoutFilter] = useState<string | null>(null);
+
+  // New state for advanced filter options
+  const [brightnessEnhancement, setBrightnessEnhancement] = useState<number>(0);
+  const [contrastEnhancement, setContrastEnhancement] = useState<number>(0);
+  const [saturationEnhancement, setSaturationEnhancement] = useState<number>(0);
+  const [useAdvancedFilters, setUseAdvancedFilters] = useState<boolean>(true);
+  const [isFilterProcessing, setIsFilterProcessing] = useState<boolean>(false);
 
   // New state for font selection
   const [selectedFont, setSelectedFont] = useState<string>(HANDWRITING_FONTS[0].value);
@@ -457,7 +418,7 @@ export default function App() {
 
         // Generate composite image with filter if enabled
         if (enableFilter) {
-          const filteredImages = await processImagesWithFilter(imagesToExport, skinSmoothingIntensity);
+          const filteredImages = await processImagesWithFilter(imagesToExport, skinSmoothingIntensity, useAdvancedFilters, brightnessEnhancement, contrastEnhancement, saturationEnhancement, setIsFilterProcessing);
           setFilteredImages(filteredImages);
           
           const filteredDataUrl = await generateCompositeImage(
@@ -477,7 +438,7 @@ export default function App() {
         console.error("Error generating composite image:", error);
       }
     }, 300), // 300ms delay
-    [selectedFrame, layout, backgroundColor, customMessage, textColor, fontSize, selectedFont, skinSmoothingIntensity]
+    [selectedFrame, layout, backgroundColor, customMessage, textColor, fontSize, selectedFont, skinSmoothingIntensity, useAdvancedFilters, brightnessEnhancement, contrastEnhancement, saturationEnhancement]
   );
 
   // Generate composite image for preview when images/layout/background color/custom message/text color/font size change and is in preview mode
@@ -488,7 +449,7 @@ export default function App() {
       
       debouncedGenerateComposite(imagesToExport, enableSkinSmoothing);
     }
-  }, [isPreview, images, debouncedGenerateComposite, enableSkinSmoothing]);
+  }, [isPreview, images, debouncedGenerateComposite, enableSkinSmoothing, useAdvancedFilters, brightnessEnhancement, contrastEnhancement, saturationEnhancement]);
 
   // Handle filter toggle
   useEffect(() => {
@@ -503,31 +464,229 @@ export default function App() {
 
   // Chụp ảnh
   const capturePhoto = useCallback(() => {
+    console.log('📸 Attempting to capture photo...');
+    console.log('Webcam ref:', webcamRef.current);
+    console.log('Is capturing:', isCapturing);
+    console.log('Show countdown:', showCountdown);
+    
     if (webcamRef.current) {
-      const imageSrc = webcamRef.current.getScreenshot();
-      if (imageSrc) {
-        setImages(prev => [...prev, imageSrc]);
-        setRemainingPhotos(prev => prev - 1);
+      try {
+        const imageSrc = webcamRef.current.getScreenshot();
+        console.log('Screenshot result:', imageSrc ? 'Success' : 'Failed');
         
-        // Kiểm tra nếu đã chụp đủ ảnh thì dừng chụp
-        if (images.length + 1 >= getLayoutPhotoCount(layout)) {
-          setIsCapturing(false);
-          setShowCountdown(false);
+        if (imageSrc) {
+          console.log('✅ Photo captured successfully!');
+          setImages(prev => [...prev, imageSrc]);
+          setRemainingPhotos(prev => prev - 1);
+          
+          // Kiểm tra nếu đã chụp đủ ảnh thì dừng chụp
+          if (images.length + 1 >= getLayoutPhotoCount(layout)) {
+            console.log('🎉 All photos captured! Stopping capture mode.');
+            setIsCapturing(false);
+            setShowCountdown(false);
+          } else {
+            console.log(`📸 Photo ${images.length + 1}/${getLayoutPhotoCount(layout)} captured. Continuing...`);
+          }
+        } else {
+          console.error('❌ Failed to capture photo - getScreenshot returned null');
+          alert('Không thể chụp ảnh. Vui lòng kiểm tra quyền truy cập camera.');
         }
+      } catch (error) {
+        console.error('❌ Error capturing photo:', error);
+        alert('Lỗi khi chụp ảnh: ' + (error as Error).message);
+      }
+    } else {
+      console.error('❌ Webcam ref is null');
+      alert('Camera chưa sẵn sàng. Vui lòng thử lại.');
+    }
+  }, [images.length, layout, getLayoutPhotoCount, isCapturing, showCountdown]);
+
+  // Upload ảnh từ file
+  const handleImageUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      
+      // Kiểm tra loại file
+      if (!file.type.startsWith('image/')) {
+        alert('Vui lòng chọn file ảnh hợp lệ! (JPG, PNG, GIF, etc.)');
+        return;
+      }
+      
+      // Kiểm tra kích thước file (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        alert('File ảnh quá lớn! Vui lòng chọn file nhỏ hơn 10MB.');
+        return;
+      }
+      
+      // Kiểm tra nếu đã đủ ảnh
+      const maxPhotos = getLayoutPhotoCount(layout);
+      if (images.length >= maxPhotos) {
+        alert(`Bạn đã có đủ ${maxPhotos} ảnh rồi! Hãy xóa ảnh cũ trước khi upload ảnh mới.`);
+        return;
+      }
+      
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        if (result) {
+          setImages(prev => [...prev, result]);
+          setRemainingPhotos(prev => Math.max(0, prev - 1));
+          
+          // Tự động bắt đầu chế độ chụp nếu chưa bắt đầu
+          if (!isCapturing) {
+            setIsCapturing(true);
+          }
+          
+          // Thông báo upload thành công
+          console.log(`Upload ảnh thành công! (${images.length + 1}/${maxPhotos})`);
+          
+          // Kiểm tra nếu đã upload đủ ảnh thì dừng
+          if (images.length + 1 >= maxPhotos) {
+            setIsCapturing(false);
+            setShowCountdown(false);
+          }
+        }
+      };
+      
+      reader.onerror = () => {
+        alert('Có lỗi khi đọc file ảnh. Vui lòng thử lại!');
+      };
+      
+      reader.readAsDataURL(file);
+    }
+    
+    // Reset input để có thể upload cùng file nhiều lần
+    event.target.value = '';
+  }, [images.length, layout, getLayoutPhotoCount, isCapturing]);
+
+  // Xóa ảnh đã chụp/upload
+  const removeImage = useCallback((index: number) => {
+    setImages(prev => {
+      const newImages = prev.filter((_, i) => i !== index);
+      // Nếu đang ở preview và xóa ảnh, quay lại chế độ chụp nếu chưa đủ ảnh
+      if (isPreview && newImages.length < getLayoutPhotoCount(layout)) {
+        setIsPreview(false);
+        setIsCapturing(true);
+      }
+      return newImages;
+    });
+    setRemainingPhotos(prev => prev + 1);
+  }, [isPreview, getLayoutPhotoCount, layout]);
+
+  // Test function to verify filter is working
+  const testFilter = useCallback(async () => {
+    console.log('🧪 Testing filter functionality...');
+    
+    if (images.length === 0) {
+      alert('Vui lòng chụp hoặc upload ít nhất 1 ảnh để test filter!');
+      return;
+    }
+    
+    const testImage = images[0];
+    console.log('🖼️ Testing with image:', testImage.substring(0, 50) + '...');
+    
+    // Test filter functionality
+    if (testImage) {
+      console.log('🧪 Running filter test...');
+      
+      // Always use advanced filters for testing now
+      console.log('🤖 Testing advanced MediaPipe AI filter...');
+      const filterOptions: FilterOptions = {
+        skinSmoothingIntensity: skinSmoothingIntensity,
+        brightnessEnhancement: brightnessEnhancement,
+        contrastEnhancement: contrastEnhancement,
+        saturationEnhancement: saturationEnhancement
+      };
+      try {
+        const result = await imageProcessor.applyAdvancedFilters(testImage, filterOptions);
+        console.log('✅ Advanced filter test completed');
+        
+        // Show result in a new window for comparison
+        const testWindow = window.open('', '_blank');
+        if (testWindow) {
+          testWindow.document.write(`
+            <html>
+              <head><title>Filter Test Result</title></head>
+              <body style="margin: 20px; font-family: Arial;">
+                <h2>Filter Test Result</h2>
+                <div style="display: flex; gap: 20px;">
+                  <div>
+                    <h3>Original</h3>
+                    <img src="${testImage}" style="max-width: 300px; border: 2px solid #ccc;" />
+                  </div>
+                  <div>
+                    <h3>Filtered</h3>
+                    <img src="${result}" style="max-width: 300px; border: 2px solid #4caf50;" />
+                  </div>
+                </div>
+                <p><strong>Filter Settings:</strong></p>
+                <ul>
+                  <li>Skin Smoothing: ${Math.round(skinSmoothingIntensity * 100)}%</li>
+                  <li>Brightness: ${Math.round(brightnessEnhancement * 100)}%</li>
+                  <li>Contrast: ${Math.round(contrastEnhancement * 100)}%</li>
+                  <li>Saturation: ${Math.round(saturationEnhancement * 100)}%</li>
+                </ul>
+              </body>
+            </html>
+          `);
+        }
+      } catch (error) {
+        console.error('❌ Advanced filter test failed:', error);
+        alert('Advanced filter test failed: ' + (error as Error).message);
       }
     }
-  }, [images.length, layout, getLayoutPhotoCount]);
+  }, [images, skinSmoothingIntensity, brightnessEnhancement, contrastEnhancement, saturationEnhancement]);
+
+  // Test webcam functionality
+  const testWebcam = useCallback(() => {
+    console.log('🔍 Testing webcam functionality...');
+    
+    if (webcamRef.current) {
+      try {
+        const imageSrc = webcamRef.current.getScreenshot();
+        if (imageSrc) {
+          console.log('✅ Webcam test successful!');
+          alert('✅ Camera hoạt động bình thường!');
+          
+          // Show test image in new window
+          const testWindow = window.open('', '_blank');
+          if (testWindow) {
+            testWindow.document.write(`
+              <html>
+                <head><title>Webcam Test</title></head>
+                <body style="margin: 20px; font-family: Arial;">
+                  <h2>Webcam Test Result</h2>
+                  <img src="${imageSrc}" style="max-width: 500px; border: 2px solid #4caf50;" />
+                  <p>✅ Camera hoạt động bình thường!</p>
+                </body>
+              </html>
+            `);
+          }
+        } else {
+          console.error('❌ Webcam test failed - no screenshot');
+          alert('❌ Camera không hoạt động. Vui lòng kiểm tra quyền truy cập.');
+        }
+      } catch (error) {
+        console.error('❌ Webcam test error:', error);
+        alert('❌ Lỗi camera: ' + (error as Error).message);
+      }
+    } else {
+      console.error('❌ Webcam ref is null');
+      alert('❌ Camera chưa sẵn sàng.');
+    }
+  }, []);
 
   // Giao diện preview đơn giản với sticker overlay
   const renderPreview = () => (
-    <Box sx={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', p: 2, flexDirection: 'column' }}>
+    <Box sx={{ minHeight: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)', p: 2, flexDirection: 'column' }}>
       {/* Main content area */}
-      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'flex-start', gap: 4, width: '100%', maxWidth: '1400px' }}>
+      <Box sx={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 4, width: '100%', maxWidth: '1400px' }}>
         
         {/* Left side - Image preview */}
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
           <Typography variant="h4" sx={{ mb: 2, textAlign: 'center', fontWeight: 'bold' }}>
-          PhotoBooth Summer
+          PhotoBooth Preview
           </Typography>
           
           {/* Side-by-side image comparison */}
@@ -586,37 +745,150 @@ export default function App() {
             maxWidth: '960px' // Match the width of both images
           }}>
             <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
-              🎨 Filter làm mịn da
+              🎨Filter
             </Typography>
             
+            {/* Loading indicator */}
+            {isFilterProcessing && (
+              <Box sx={{ textAlign: 'center', mb: 2, p: 2, backgroundColor: '#e3f2fd', borderRadius: '8px' }}>
+                <Typography variant="body1" sx={{ color: '#1976d2', fontWeight: 'bold' }}>
+                  🔄 Đang xử lý filter... Vui lòng chờ
+                </Typography>
+              </Box>
+            )}
+            
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
-              <Typography variant="body1" sx={{ color: '#222' }}>Bật filter:</Typography>
+              <Typography variant="body1" sx={{ color: '#222', fontWeight: 'bold', fontSize: '1.1rem' }}>Bật filter:</Typography>
               <Button
                 variant={enableSkinSmoothing ? 'contained' : 'outlined'}
-                color={enableSkinSmoothing ? 'success' : 'inherit'}
                 onClick={() => setEnableSkinSmoothing(!enableSkinSmoothing)}
-                sx={{ minWidth: '80px' }}
+                disabled={isFilterProcessing}
+                sx={{ 
+                  minWidth: '140px',
+                  minHeight: '45px',
+                  borderRadius: '25px',
+                  fontSize: '1rem',
+                  fontWeight: 'bold',
+                  textTransform: 'none',
+                  boxShadow: enableSkinSmoothing ? '0 4px 15px rgba(33, 150, 243, 0.3)' : '0 2px 8px rgba(0,0,0,0.1)',
+                  background: enableSkinSmoothing 
+                    ? 'linear-gradient(135deg, #2196F3 0%, #1976D2 50%, #1565C0 100%)'
+                    : 'linear-gradient(135deg, #f5f5f5 0%, #e0e0e0 100%)',
+                  color: enableSkinSmoothing ? 'white' : '#666',
+                  border: enableSkinSmoothing ? 'none' : '2px solid #ddd',
+                  transition: 'all 0.3s ease',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: enableSkinSmoothing 
+                      ? '0 6px 20px rgba(33, 150, 243, 0.4)'
+                      : '0 4px 12px rgba(0,0,0,0.15)',
+                    background: enableSkinSmoothing 
+                      ? 'linear-gradient(135deg, #1976D2 0%, #1565C0 50%, #0D47A1 100%)'
+                      : 'linear-gradient(135deg, #e8e8e8 0%, #d0d0d0 100%)',
+                  },
+                  '&:active': {
+                    transform: 'translateY(0px)',
+                    boxShadow: enableSkinSmoothing 
+                      ? '0 2px 10px rgba(33, 150, 243, 0.3)'
+                      : '0 1px 5px rgba(0,0,0,0.1)',
+                  }
+                }}
               >
-                {enableSkinSmoothing ? 'Bật' : 'Tắt'}
+                {enableSkinSmoothing ? '✨ Bật' : '🎨 Tắt'}
               </Button>
             </Box>
 
             {enableSkinSmoothing && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
-                <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Cường độ:</Typography>
-                <input 
-                  type="range" 
-                  min="0.1" 
-                  max="1" 
-                  step="0.1" 
-                  value={skinSmoothingIntensity} 
-                  onChange={(e) => setSkinSmoothingIntensity(Number(e.target.value))}
-                  style={{ width: '200px' }}
-                />
-                <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
-                  {Math.round(skinSmoothingIntensity * 100)}%
-                </Typography>
-              </Box>
+              <>
+                {/* Skin Smoothing Intensity */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
+                  <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Mịn da:</Typography>
+                  <input 
+                    type="range" 
+                    min="0.1" 
+                    max="1" 
+                    step="0.1" 
+                    value={skinSmoothingIntensity} 
+                    onChange={(e) => setSkinSmoothingIntensity(Number(e.target.value))}
+                    style={{ width: '200px' }}
+                  />
+                  <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
+                    {Math.round(skinSmoothingIntensity * 100)}%
+                  </Typography>
+                </Box>
+
+                {/* Advanced Filter Controls */}
+                <>
+                  {/* Brightness Enhancement */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
+                    <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Độ sáng:</Typography>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.1" 
+                      value={brightnessEnhancement} 
+                      onChange={(e) => setBrightnessEnhancement(Number(e.target.value))}
+                      style={{ width: '200px' }}
+                    />
+                    <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
+                      {Math.round(brightnessEnhancement * 100)}%
+                    </Typography>
+                  </Box>
+
+                  {/* Contrast Enhancement */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
+                    <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Độ tương phản:</Typography>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.1" 
+                      value={contrastEnhancement} 
+                      onChange={(e) => setContrastEnhancement(Number(e.target.value))}
+                      style={{ width: '200px' }}
+                    />
+                    <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
+                      {Math.round(contrastEnhancement * 100)}%
+                    </Typography>
+                  </Box>
+
+                  {/* Saturation Enhancement */}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, justifyContent: 'center' }}>
+                    <Typography variant="body1" sx={{ color: '#222', minWidth: '120px' }}>Độ bão hòa:</Typography>
+                    <input 
+                      type="range" 
+                      min="0" 
+                      max="1" 
+                      step="0.1" 
+                      value={saturationEnhancement} 
+                      onChange={(e) => setSaturationEnhancement(Number(e.target.value))}
+                      style={{ width: '200px' }}
+                    />
+                    <Typography variant="body2" sx={{ color: '#666', minWidth: '40px' }}>
+                      {Math.round(saturationEnhancement * 100)}%
+                    </Typography>
+                  </Box>
+                </>
+
+                {/* Test Filter Button */}
+                <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, mt: 2 }}>
+                  <Button
+                    variant="outlined"
+                    color="warning"
+                    onClick={() => {
+                      setBrightnessEnhancement(0);
+                      setContrastEnhancement(0);
+                      setSaturationEnhancement(0);
+                      setSkinSmoothingIntensity(0);
+                    }}
+                    disabled={isFilterProcessing}
+                    sx={{ minWidth: '120px' }}
+                  >
+                    🔄 Reset Settings
+                  </Button>
+                </Box>
+              </>
             )}
           </Box>
 
@@ -676,7 +948,7 @@ export default function App() {
         </Box>
 
         {/* Right side - Customization options */}
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '400px', minWidth: '400px' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '400px', minWidth: '400px', justifyContent: 'center', height: '100%' }}>
           <Typography variant="h5" sx={{ mb: 2, textAlign: 'center' }}>
             Tùy chỉnh ảnh
           </Typography>
@@ -889,7 +1161,7 @@ export default function App() {
               >
                 {HANDWRITING_FONTS.map((font) => (
                   <option 
-                    key={font.value} 
+                    key={font.name} 
                     value={font.value} 
                     style={{ 
                       fontFamily: font.value,
@@ -952,14 +1224,14 @@ export default function App() {
   );
 
   const renderCapture = () => (
-    <Container maxWidth="lg" sx={{ minHeight: '100vh', background: 'linear-gradient(120deg, #ffe0ef 0%, #fff 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <Container maxWidth="lg" sx={{ minHeight: '100vh', background: 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <Box sx={{ my: 4, width: '100%' }}>
         <Typography variant="h3" component="h1" gutterBottom align="center">
-          Photobooth Mùa Hè
+        Summertime Photobooth
         </Typography>
         <Grid container spacing={3} justifyContent="center">
           <Grid item xs={12} md={8}>
-            <Paper elevation={3} sx={{ p: 2, position: 'relative', mb: 2 }}>
+            <Paper elevation={3} sx={{ p: 2, position: 'relative', mb: 2, border: '2px solid #fff', backgroundColor: '#fff' }}>
               <Webcam
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
@@ -989,14 +1261,14 @@ export default function App() {
                     borderRadius: '4px',
                   }}
                 >
-                  Còn {getLayoutPhotoCount(layout) - images.length} ảnh
+                  Còn {remainingPhotos} ảnh
                 </Typography>
               )}
             </Paper>
 
             {/* Hiển thị các ảnh đã chụp */}
             {images.length > 0 && (
-              <Paper elevation={3} sx={{ p: 2, mb: 2 }}>
+              <Paper elevation={3} sx={{ p: 2, mb: 2, border: '2px solid #00B9F2' }}>
                 <Typography variant="h6" gutterBottom sx={{ textAlign: 'center', mb: 2 }}>
                   Ảnh đã chụp ({images.length}/{getLayoutPhotoCount(layout)})
                 </Typography>
@@ -1022,11 +1294,11 @@ export default function App() {
                         flexShrink: 0
                       }}
                     >
-                      <img 
-                        src={image} 
+                      <img
+                        src={image}
                         alt={`Ảnh ${index + 1}`}
-                        style={{ 
-                          width: '100%', 
+                        style={{
+                          width: '100%',
                           height: '100%', 
                           objectFit: 'cover' 
                         }}
@@ -1046,6 +1318,24 @@ export default function App() {
                       >
                         {index + 1}
                       </Typography>
+                      <IconButton
+                        size="small"
+                        onClick={() => removeImage(index)}
+                        sx={{
+                          position: 'absolute',
+                          top: '4px',
+                          left: '4px',
+                          backgroundColor: '#ff4444',
+                          color: 'white',
+                          width: '24px',
+                          height: '24px',
+                          '&:hover': {
+                            backgroundColor: '#cc0000'
+                          }
+                        }}
+                      >
+                        ✕
+                      </IconButton>
                     </Box>
                   ))}
                 </Box>
@@ -1055,7 +1345,6 @@ export default function App() {
                   <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
                     <Button
                       variant="contained"
-                      color="success"
                       onClick={async () => {
                         const compositeImage = await generateCompositeImage(
                           images, 
@@ -1074,18 +1363,26 @@ export default function App() {
                       }}
                       sx={{
                         borderRadius: 9999,
-                        border: '1px solid #2e7d32',
-                        color: '#fff',
-                        backgroundColor: '#2e7d32',
                         px: 4,
                         py: 1.5,
                         fontSize: '1.1rem',
                         fontWeight: 'bold',
-                        // Hover effect
+                        textTransform: 'none',
+                        boxShadow: '0 4px 15px rgba(251, 212, 228, 0.25)',
+                        background: 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)',
+                        color: '#d72660',
+                        border: 'none',
+                        transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
                         '&:hover': {
-                          backgroundColor: '#1b5e20',
-                          borderColor: '#1b5e20',
+                          background: 'linear-gradient(135deg, #fff 0%, #fbd4e4 100%)',
+                          color: '#b71c50',
+                          boxShadow: '0 6px 24px rgba(251, 212, 228, 0.35)',
+                          transform: 'translateY(-2px) scale(1.03)',
                         },
+                        '&:active': {
+                          transform: 'translateY(0px) scale(0.98)',
+                          boxShadow: '0 2px 8px rgba(251, 212, 228, 0.18)',
+                        }
                       }}
                     >
                       🎨 Xem Preview
@@ -1096,11 +1393,11 @@ export default function App() {
             )}
           </Grid>
           <Grid item xs={12} md={4}>
-            <Paper elevation={3} sx={{ p: 2 }}>
+            <Paper elevation={3} sx={{ p: 2, border: '2px solid #00B9F2' }}>
               <Typography variant="h6" gutterBottom>
                 Chọn Layout
               </Typography>
-              <Grid container spacing={1}>
+              <Grid container spacing={1} sx={{ mb: 2 }}>
                 {LAYOUTS.map((l) => (
                   <Grid item xs={6} key={l.name}>
                     <Button
@@ -1108,13 +1405,31 @@ export default function App() {
                       fullWidth
                       onClick={() => setLayout(l.name)}
                       disabled={isCapturing}
+                      sx={{
+                        borderRadius: 9999,
+                        fontWeight: 'bold',
+                        fontSize: '1rem',
+                        py: 1.2,
+                        background: layout === l.name ? 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)' : '#fff',
+                        color: layout === l.name ? '#d72660' : '#888',
+                        border: layout === l.name ? 'none' : '2px solid #fbd4e4',
+                        boxShadow: layout === l.name ? '0 2px 8px rgba(251, 212, 228, 0.18)' : 'none',
+                        transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
+                        '&:hover': {
+                          background: layout === l.name ? 'linear-gradient(135deg, #fff 0%, #fbd4e4 100%)' : '#fbd4e4',
+                          color: '#b71c50',
+                          borderColor: '#fbd4e4',
+                          boxShadow: '0 4px 16px rgba(251, 212, 228, 0.25)',
+                          transform: 'scale(1.04)',
+                        },
+                      }}
                     >
                       {l.label}
                     </Button>
                   </Grid>
                 ))}
               </Grid>
-              
+
               {/* Tùy chọn Countdown */}
               <Box sx={{ mt: 3, mb: 2 }}>
                 <Typography variant="h6" gutterBottom>
@@ -1142,16 +1457,118 @@ export default function App() {
               </Box>
               
               <Box sx={{ mt: 2 }}>
+                {images.length === 0 ? (
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    onClick={startCapture}
+                    disabled={isCapturing}
+                    sx={{
+                      borderRadius: 9999,
+                      px: 4,
+                      py: 1.5,
+                      fontSize: '1.1rem',
+                      fontWeight: 'bold',
+                      textTransform: 'none',
+                      boxShadow: '0 4px 15px rgba(251, 212, 228, 0.25)',
+                      background: 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)',
+                      color: '#d72660',
+                      border: 'none',
+                      transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
+                      '&:hover': {
+                        background: 'linear-gradient(135deg, #fff 0%, #fbd4e4 100%)',
+                        color: '#b71c50',
+                        boxShadow: '0 6px 24px rgba(251, 212, 228, 0.35)',
+                        transform: 'translateY(-2px) scale(1.03)',
+                      },
+                      '&:active': {
+                        transform: 'translateY(0px) scale(0.98)',
+                        boxShadow: '0 2px 8px rgba(251, 212, 228, 0.18)',
+                      }
+                    }}
+                  >
+                    📸 Bắt đầu chụp
+                  </Button>
+                ) : (
+                  images.length < getLayoutPhotoCount(layout) && (
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      onClick={() => {
+                        setIsCapturing(true);
+                        setShowCountdown(true);
+                      }}
+                      disabled={isCapturing}
+                      sx={{
+                        borderRadius: 9999,
+                        px: 4,
+                        py: 1.5,
+                        fontSize: '1.1rem',
+                        fontWeight: 'bold',
+                        textTransform: 'none',
+                        boxShadow: '0 4px 15px rgba(251, 212, 228, 0.25)',
+                        background: 'linear-gradient(135deg, #fbd4e4 0%, #fff 100%)',
+                        color: '#d72660',
+                        border: 'none',
+                        transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
+                        '&:hover': {
+                          background: 'linear-gradient(135deg, #fff 0%, #fbd4e4 100%)',
+                          color: '#b71c50',
+                          boxShadow: '0 6px 24px rgba(251, 212, 228, 0.35)',
+                          transform: 'translateY(-2px) scale(1.03)',
+                        },
+                        '&:active': {
+                          transform: 'translateY(0px) scale(0.98)',
+                          boxShadow: '0 2px 8px rgba(251, 212, 228, 0.18)',
+                        }
+                      }}
+                    >
+                      📸 Chụp tiếp
+                    </Button>
+                  )
+                )}
+                
+                {/* Nút Upload Ảnh */}
                 <Button
-                  variant="contained"
-                  color="primary"
+                  variant="outlined"
+                  component="label"
                   fullWidth
-                  onClick={startCapture}
-                  disabled={isCapturing}
-                  sx={{ mb: 1 }}
+                  disabled={images.length >= getLayoutPhotoCount(layout)}
+                  sx={{
+                    borderRadius: 9999,
+                    px: 4,
+                    py: 1.2,
+                    fontWeight: 'bold',
+                    fontSize: '1rem',
+                    border: '2px solid #fbd4e4',
+                    color: '#d72660',
+                    background: '#fff',
+                    boxShadow: 'none',
+                    transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
+                    '&:hover': {
+                      background: '#fbd4e4',
+                      color: '#b71c50',
+                      borderColor: '#fbd4e4',
+                    },
+                    '&:active': {
+                      background: '#fff',
+                      color: '#d72660',
+                    }
+                  }}
+                  title={images.length >= getLayoutPhotoCount(layout) 
+                    ? `Đã đủ ${getLayoutPhotoCount(layout)} ảnh. Hãy xóa ảnh cũ trước khi upload.` 
+                    : `Upload ảnh (${images.length}/${getLayoutPhotoCount(layout)})`
+                  }
                 >
-                  Bắt đầu chụp
+                  📁 Upload ảnh ({images.length}/{getLayoutPhotoCount(layout)})
+                  <input
+                    type="file"
+                    hidden
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                  />
                 </Button>
+                
                 <Button
                   variant="outlined"
                   color="secondary"
@@ -1162,9 +1579,30 @@ export default function App() {
                     setShowCountdown(false);
                     setRemainingPhotos(getLayoutPhotoCount(layout));
                   }}
-                  disabled={!isCapturing && images.length === 0} // Chỉ cho phép reset khi đang chụp hoặc đã có ảnh
+                  disabled={!isCapturing && images.length === 0}
+                  sx={{
+                    borderRadius: 9999,
+                    px: 4,
+                    py: 1.2,
+                    fontWeight: 'bold',
+                    fontSize: '1rem',
+                    border: '2px solid #fbd4e4',
+                    color: '#d72660',
+                    background: '#fff',
+                    boxShadow: 'none',
+                    transition: 'all 0.3s cubic-bezier(.4,2,.3,1)',
+                    '&:hover': {
+                      background: '#fbd4e4',
+                      color: '#b71c50',
+                      borderColor: '#fbd4e4',
+                    },
+                    '&:active': {
+                      background: '#fff',
+                      color: '#d72660',
+                    }
+                  }}
                 >
-                  Reset
+                  RESET
                 </Button>
               </Box>
             </Paper>
@@ -1173,6 +1611,11 @@ export default function App() {
       </Box>
     </Container>
   );
+
+  useEffect(() => {
+    document.body.style.overflow = 'auto';
+    document.documentElement.style.overflow = 'auto';
+  }, []);
 
   return (
     <React.Fragment>
