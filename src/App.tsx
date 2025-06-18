@@ -1235,6 +1235,7 @@ export default function App() {
               <Webcam
                 ref={webcamRef}
                 screenshotFormat="image/jpeg"
+                mirrored={true}
                 style={{ width: '100%', height: 'auto', objectFit: 'cover', borderRadius: 8 }}
                 videoConstraints={{ width: 1280, height: 720, aspectRatio: 16 / 9 }}
               />
